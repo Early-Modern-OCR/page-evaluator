@@ -33,10 +33,17 @@ object Main extends App with Logging {
    */
   class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
     object ValueConverters {
+      private def getFilenameWithoutExtension(filePath: String) = {
+        var idx = filePath.lastIndexOf(File.separator)
+        val fname = if (idx != -1) filePath.substring(idx + 1) else filePath
+        idx = fname.lastIndexOf(".")
+        if (idx != -1) fname.substring(0, idx) else fname
+      }
+
       implicit val dictionaryListConverter: ValueConverter[List[SpellDictionary]] =
         listArgConverter[Try[SpellDictionary]](f =>
           Try {
-            val dictName = Files.getNameWithoutExtension(f)
+            val dictName = getFilenameWithoutExtension(f)
             managed(Source.fromFile(f).reader()).acquireAndGet {
               dictReader => new SpellDictionaryHashMap(dictName, dictReader)
             }

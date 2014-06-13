@@ -5,8 +5,10 @@ import com.google.common.io.Files;
 import com.martiansoftware.jsap.*;
 import com.martiansoftware.jsap.stringparsers.EnumeratedStringParser;
 import com.martiansoftware.jsap.stringparsers.FileStringParser;
+import edu.illinois.i3.emop.apps.pageevaluator.exceptions.PageParserException;
 import edu.illinois.i3.emop.apps.pageevaluator.hocr.HOCRPage;
-import edu.illinois.i3.emop.apps.pageevaluator.hocr.HOCRPageStats;
+import edu.illinois.i3.emop.apps.pageevaluator.txt.TxtPage;
+import opennlp.tools.tokenize.SimpleTokenizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,9 +34,7 @@ public class Main {
                 log.info("Processing {}: {}", format, pageOcrFile);
 
             Reader pageReader = Files.newReader(pageOcrFile, Charsets.UTF_8);
-            HOCRPage ocrPage = HOCRPage.parse(pageReader);
-            HOCRPageStats pageStats = ocrPage.calculateStatistics();
-
+            OCRPageStats pageStats = processDocument(pageReader, pageOcrFile.getName(), format);
             float correctableScore = pageStats.getCorrectableScore();
             float qualityScore = pageStats.getQualityScore();
 
@@ -70,6 +70,25 @@ public class Main {
                 .setHelp("The page OCR file");
 
         return new Parameter[] { format, quiet, pageOcrFile };
+    }
+
+    private static OCRPageStats processDocument(Reader pageReader, String id, DocumentFormat format) throws PageParserException {
+        OCRPage ocrPage;
+
+        switch (format) {
+            case HOCR:
+                ocrPage = HOCRPage.parse(pageReader);
+                break;
+
+            case TXT:
+                ocrPage = TxtPage.parse(pageReader, id, SimpleTokenizer.INSTANCE);
+                break;
+
+            default:
+                throw new RuntimeException("Unsupported format: " + format);
+        }
+
+        return ocrPage.calculateStatistics();
     }
 
     private static String getApplicationHelp() {

@@ -166,36 +166,45 @@ object Main extends App with Logging {
 
       tokens.sliding(3).withFilter(_.exists(_.isMisspelled)).foreach {
         case window@Seq(token1, token2, token3) =>
-          logger.debug("Finding replacements for {}", token1)
-          val ngram1 = replacementCache.getOrElseUpdate(token1.cleanedText, {
-            token1.replacements.map(_.toLowerCase).toSet
-          })
+          logger.debug("window: {} {} {}", token1, token2, token3)
+          val ngram1 = if (token1.isMisspelled) {
+            logger.debug("Finding replacements for {}", token1)
+            replacementCache.getOrElseUpdate(token1.cleanedText, {
+              token1.replacements.map(_.toLowerCase).toSet
+            })
+          } else Set(token1.cleanedText)
 
-          logger.debug("Finding replacements for {}", token2)
-          val ngram2 = replacementCache.getOrElseUpdate(token2.cleanedText, {
-            token2.replacements.map(_.toLowerCase).toSet
-          })
+          val ngram2 = if (token2.isMisspelled) {
+            logger.debug("Finding replacements for {}", token2)
+            replacementCache.getOrElseUpdate(token2.cleanedText, {
+              token2.replacements.map(_.toLowerCase).toSet
+            })
+          } else Set(token2.cleanedText)
 
-          logger.debug("Finding replacements for {}", token3)
-          val ngram3 = replacementCache.getOrElseUpdate(token3.cleanedText, {
-            token3.replacements.map(_.toLowerCase).toSet
-          })
+          val ngram3 = if (token3.isMisspelled) {
+            logger.debug("Finding replacements for {}", token3)
+            replacementCache.getOrElseUpdate(token3.cleanedText, {
+              token3.replacements.map(_.toLowerCase).toSet
+            })
+          } else Set(token3.cleanedText)
 
           if (ngram1.size + ngram2.size + ngram3.size > 3) {
-            logger.debug(s"${token1.text} -> $ngram1")
-            logger.debug(s"${token2.text} -> $ngram2")
-            logger.debug(s"${token3.text} -> $ngram3")
+            logger.debug("Variants used for context matching:")
+            logger.debug("{} -> {}", token1.text, ngram1)
+            logger.debug("{} -> {}", token2.text, ngram2)
+            logger.debug("{} -> {}", token3.text, ngram3)
 
             contextChecker.matches(ngram1, ngram2, ngram3) match {
               case Success(contextMatches) if contextMatches.nonEmpty => contextMatches.foreach {
                 case ContextMatch(text1, text2, text3, matchCount, volCount) =>
-                  logger.debug(s"*** contextMatch: $text1 $text2 $text3")
+                  logger.debug("ContextMatch: {} {} {}  (matchCount: {} , volCount: {})",
+                    text1, text2, text3, matchCount.toString, volCount.toString)
                   if (token1.isMisspelled) token1.addContextMatch(1, text1, matchCount, volCount)
                   if (token2.isMisspelled) token2.addContextMatch(2, text2, matchCount, volCount)
                   if (token3.isMisspelled) token3.addContextMatch(3, text3, matchCount, volCount)
               }
               case Failure(e) => println(window.mkString(" ") concat s" -> ${e.getMessage}")
-              case _ => // TODO check for 2-gram matches?
+              case _ => logger.debug("No 3-gram context matches found")  // TODO check for 2-gram matches?
             }
           }
       }
@@ -220,6 +229,12 @@ object Main extends App with Logging {
     }
 
     correctTokens(tokens)
+
+    if (logger.underlying.isDebugEnabled) {
+      logger.debug("Corrections:")
+      for (token <- tokens.withFilter(t => t.isMisspelled && t.bestReplacement.isDefined))
+        logger.debug("{} -> {}", token.text, token.bestReplacement.get)
+    }
 
     def getProperties(s: String) = {
       val Pattern = """(\S+) (.+)""".r

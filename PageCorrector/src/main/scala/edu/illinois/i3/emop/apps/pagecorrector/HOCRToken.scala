@@ -116,9 +116,14 @@ abstract class HOCRToken(id: String, text: String) extends OCRToken(id, text) wi
     case (m1, m2) => m1.size > m2.size
   })
 
-  def bestReplacement = sortedContextMatches.map(_._1).headOption match {
+  def bestUnformattedReplacement = sortedContextMatches.map(_._1).headOption match {
+    case m @ Some(bestMatch) => m
+    case None if replacements.size == 2 => Some(replacements.tail.head) // skip the first, which is always the original token
+    case _ => None
+  }
+
+  def bestReplacement = bestUnformattedReplacement match {
     case Some(bestMatch) => Some(preservePunctuationAndStyle(text, bestMatch))
-    case None if replacements.size == 2 => Some(preservePunctuationAndStyle(text, replacements.tail.head)) // skip the first, which is always the original token
     case _ => None
   }
 

@@ -5,6 +5,7 @@ import com.typesafe.scalalogging.slf4j.Logging
 import edu.illinois.i3.spellcheck.engine.{SpellDictionaryHashMap, SpellDictionary}
 import com.google.common.io.Files
 import java.io.{FileWriter, PrintWriter, File}
+import scala.collection.immutable.TreeMap
 import scala.io.{Codec, Source}
 import resource._
 import net.liftweb.json.{parse => parseJson, JString, JField}
@@ -104,8 +105,13 @@ object Main extends App with Logging {
 
     // Output directory
     val outputDir = opt[String]("outputDir",
-      descr = "The directory where the results should be written to",
-      required = true)
+        descr = "The directory where the results should be written to",
+        required = true)
+
+    val saveTransformationStats = opt[Boolean]("save",
+        descr = "Save stats about which transformation rules were applied",
+        default = Some(false)
+    )
   }
 
   // Parse the command line args and extract values
@@ -117,6 +123,7 @@ object Main extends App with Logging {
   val dictionaries = conf.dictionaries()
   val pageOcrFile = conf.pageOcrFile()
   val outputDir = conf.outputDir()
+  val saveTransformationStats = conf.saveTransformationStats()
 
   val pageOcrName = pageOcrFile.getName.substring(0, pageOcrFile.getName.lastIndexOf('.'))
   val outAltoXmlFile = new File(outputDir, s"${pageOcrName}_ALTO.xml")
@@ -232,8 +239,34 @@ object Main extends App with Logging {
 
     if (logger.underlying.isDebugEnabled) {
       logger.debug("Corrections:")
-      for (token <- tokens.withFilter(t => t.isMisspelled && t.bestReplacement.isDefined))
+      for (token <- tokens.withFilter(t => t.isMisspelled && t.bestUnformattedReplacement.isDefined))
         logger.debug("{} -> {}", token.text, token.bestReplacement.get)
+    }
+
+    if (saveTransformationStats) {
+      val transformStats = mutable.Map.empty[(String, String), Int]
+      for (token <- tokens.withFilter(t => t.isMisspelled && t.bestUnformattedReplacement.isDefined)) {
+        val replacement = token.bestUnformattedReplacement.get
+        token.correctTransformations.find(_.text equalsIgnoreCase replacement) match {
+          case Some(TransformedText(_, _, transformations)) =>
+            val transformCounts = transformations.map(t => t.original -> t.replacement).groupBy(t => t).map {
+              case (k, v) => k -> v.length
+            }
+            for ((transform, count) <- transformCounts)
+              transformStats(transform) = transformStats.getOrElse(transform, 0) + 1
+
+          case None =>
+        }
+      }
+
+      if (transformStats.nonEmpty) {
+        val outRuleStatsTxtFile = new File(outputDir, s"${pageOcrName}_rules.tsv")
+        managed(new FileWriter(outRuleStatsTxtFile)) acquireAndGet { txtFile =>
+          txtFile.write("orig\trepl\tcount\n")
+          for (((o, r), count) <- transformStats.toSeq.sortBy(- _._2))
+            txtFile.write(s"$o\t$r\t$count\n")
+        }
+      }
     }
 
     def getProperties(s: String) = {

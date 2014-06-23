@@ -214,6 +214,8 @@ object Main extends App with Logging {
               case _ => logger.debug("No 3-gram context matches found")  // TODO check for 2-gram matches?
             }
           }
+
+        case _ => // skip context matching if page has < 3 tokens
       }
     }
 
@@ -383,7 +385,8 @@ object Main extends App with Logging {
                                   val (wordIsHyphenated, isFirstPartOfHyphen, subsContent, subsType, content) = token match {
                                     case ht: HyphenatedToken if ht.isMisspelled =>
                                       val replacement = ht.bestReplacement.getOrElse(ht.text)
-                                      val hypPos = ht.firstToken.text.length-1
+                                      val diff = ht.text.length - replacement.length
+                                      val hypPos = ht.firstToken.text.length-1 - (if (diff > 0) diff else 0)
                                       val isFirstPart = ht.firstToken.id equals wordId
                                       val (part, c) = if (isFirstPart)
                                         ("HypPart1", replacement.take(hypPos)) else

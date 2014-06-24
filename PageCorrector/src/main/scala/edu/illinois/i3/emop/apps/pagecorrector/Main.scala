@@ -3,25 +3,15 @@ package edu.illinois.i3.emop.apps.pagecorrector
 import org.rogach.scallop.{ValueConverter, ScallopConf, singleArgConverter, listArgConverter}
 import com.typesafe.scalalogging.slf4j.Logging
 import edu.illinois.i3.spellcheck.engine.{SpellDictionaryHashMap, SpellDictionary}
-import com.google.common.io.Files
 import java.io.{FileWriter, PrintWriter, File}
-import scala.collection.immutable.TreeMap
 import scala.io.{Codec, Source}
 import resource._
-import net.liftweb.json.{parse => parseJson, JString, JField}
+import net.liftweb.json.{parse => parseJson, JString, JField, compactRender}
+import net.liftweb.json.JsonDSL._
 import scala.util._
 import TextTransformer._
 import edu.illinois.i3.emop.apps.pagecorrector.utils.BoneCPConnPool
 import scala.collection.mutable
-import org.w3c.dom.{Element, NodeList, Document}
-import javax.xml.xpath.{XPathConstants, XPathFactory}
-import edu.illinois.i3.scala.utils.implicits.XmlImplicits._
-import scala.xml._
-import scala.util.Left
-import scala.util.Failure
-import scala.Some
-import scala.util.Success
-import scala.util.Right
 
 
 object Main extends App with Logging {
@@ -75,12 +65,18 @@ object Main extends App with Logging {
 
     import ValueConverters._
 
-    version {
+    val (appTitle, appVersion, appVendor) = {
       val p = getClass.getPackage
       val nameOpt = Option(p.getImplementationTitle)
       val versionOpt = Option(p.getImplementationVersion)
-      nameOpt.flatMap(name => versionOpt.map(version => s"$name $version")).getOrElse("PageCorrector")
+      val vendorOpt = Option(p.getImplementationVendor)
+      (nameOpt, versionOpt, vendorOpt)
     }
+
+    version(appTitle.flatMap(
+      name => appVersion.flatMap(
+        version => appVendor.map(
+          vendor => s"$name $version\n$vendor"))).getOrElse("PageCorrector"))
 
     // Database connection parameters
     val dbUrl = opt[String]("db", descr = "The DB connection URL", required = true)
@@ -112,6 +108,29 @@ object Main extends App with Logging {
         descr = "Save stats about which transformation rules were applied",
         default = Some(false)
     )
+
+    val showCorrectionStats = opt[Boolean]("stats",
+        descr = "Print correction statistics in JSON format, at the end",
+        default = Some(false)
+    )
+
+    val preProcName = opt[String]("preProcName",
+        noshort = true,
+        descr = "The name of the software used in the pre-processing step",
+        default = None
+    )
+
+    val preProcVer = opt[String]("preProcVersion",
+        noshort = true,
+        descr = "The version of the software used in the pre-processing step",
+        default = None
+    )
+
+    val preProcVendor = opt[String]("preProcVendor",
+        noshort = true,
+        descr = "The name of the vendor of the software used in the pre-processing step",
+        default = None
+    )
   }
 
   // Parse the command line args and extract values
@@ -124,11 +143,14 @@ object Main extends App with Logging {
   val pageOcrFile = conf.pageOcrFile()
   val outputDir = conf.outputDir()
   val saveTransformationStats = conf.saveTransformationStats()
+  val showCorrectionStats = conf.showCorrectionStats()
 
+  // Define the output files
   val pageOcrName = pageOcrFile.getName.substring(0, pageOcrFile.getName.lastIndexOf('.'))
   val outAltoXmlFile = new File(outputDir, s"${pageOcrName}_ALTO.xml")
   val outAltoTxtFile = new File(outputDir, s"${pageOcrName}_ALTO.txt")
 
+  // Create the DB connection pool
   val connPool = {
     val connPoolFactory = new BoneCPConnPool {
       override val BONECP_MIN_CONN_PER_PART: Int = 2
@@ -138,113 +160,37 @@ object Main extends App with Logging {
     connPoolFactory.createConnectionPool("com.mysql.jdbc.Driver", dbUrl, dbUser, dbPasswd)
   }
 
+  // Use the connection pool to create the ngram context checker
+  val contextChecker = connPool match {
+    case Success(pool) => new NgramContextMatcher(pool)
+    case Failure(e) => throw new RuntimeException(s"Error creating database connection pool", e)
+  }
+
   managed(Source.fromFile(pageOcrFile).bufferedReader()).acquireAndGet { reader =>
-    val pageParser = new HOCRPageParser with LineCleaner with HyphenatedTokenJoiner {
-      import org.w3c.dom.Element
+    // Create an instance of the page corrector
+    val pageCorrector = new EmopPageCorrector(dictionaries, transformRules, contextChecker)
 
-      override type TokenType = HOCRToken
-      override type HyphenatedTokenType = HyphenatedToken
-
-      protected override def createToken(xmlWord: Element) = {
-        val id = xmlWord.getAttribute("id")
-        val text = xmlWord.getTextContent
-        new HOCRToken(id, text) {
-          override val dictionaries = Main.dictionaries
-          override val transformRules = Main.transformRules
-        }
-      }
-
-      protected override def createHyphenatedToken(firstToken: TokenType, secondToken: TokenType) =
-        new HyphenatedToken(firstToken, secondToken) {
-          override val dictionaries = Main.dictionaries
-          override val transformRules = Main.transformRules
-        }
-
-      override def getLines(document: Document) = joinHyphenatedTokens(cleanLines(super.getLines(document)))
-    }
-
-    def correctTokens(tokens: Seq[HOCRToken]) {
-      val replacementCache = mutable.HashMap.empty[String, Iterable[String]]
-
-      val contextChecker = connPool match {
-        case Success(pool) => new NgramContextMatcher(pool)
-        case Failure(e) => throw new RuntimeException(s"Error creating database connection pool", e)
-      }
-
-      tokens.sliding(3).withFilter(_.exists(_.isMisspelled)).foreach {
-        case window@Seq(token1, token2, token3) =>
-          logger.debug("window: {} {} {}", token1, token2, token3)
-          val ngram1 = if (token1.isMisspelled) {
-            logger.debug("Finding replacements for {}", token1)
-            replacementCache.getOrElseUpdate(token1.cleanedText, {
-              token1.replacements.map(_.toLowerCase).toSet
-            })
-          } else Set(token1.cleanedText)
-
-          val ngram2 = if (token2.isMisspelled) {
-            logger.debug("Finding replacements for {}", token2)
-            replacementCache.getOrElseUpdate(token2.cleanedText, {
-              token2.replacements.map(_.toLowerCase).toSet
-            })
-          } else Set(token2.cleanedText)
-
-          val ngram3 = if (token3.isMisspelled) {
-            logger.debug("Finding replacements for {}", token3)
-            replacementCache.getOrElseUpdate(token3.cleanedText, {
-              token3.replacements.map(_.toLowerCase).toSet
-            })
-          } else Set(token3.cleanedText)
-
-          if (ngram1.size + ngram2.size + ngram3.size > 3) {
-            logger.debug("Variants used for context matching:")
-            logger.debug("{} -> {}", token1.text, ngram1)
-            logger.debug("{} -> {}", token2.text, ngram2)
-            logger.debug("{} -> {}", token3.text, ngram3)
-
-            contextChecker.matches(ngram1, ngram2, ngram3) match {
-              case Success(contextMatches) if contextMatches.nonEmpty => contextMatches.foreach {
-                case ContextMatch(text1, text2, text3, matchCount, volCount) =>
-                  logger.debug("ContextMatch: {} {} {}  (matchCount: {} , volCount: {})",
-                    text1, text2, text3, matchCount.toString, volCount.toString)
-                  if (token1.isMisspelled) token1.addContextMatch(1, text1, matchCount, volCount)
-                  if (token2.isMisspelled) token2.addContextMatch(2, text2, matchCount, volCount)
-                  if (token3.isMisspelled) token3.addContextMatch(3, text3, matchCount, volCount)
-              }
-              case Failure(e) => println(window.mkString(" ") concat s" -> ${e.getMessage}")
-              case _ => logger.debug("No 3-gram context matches found")  // TODO check for 2-gram matches?
-            }
-          }
-
-        case _ => // skip context matching if page has < 3 tokens
-      }
-    }
-
-    val pageXml = pageParser.readXml(reader) match {
+    // Read the page hOCR XML
+    val pageXml = pageCorrector.readXml(reader) match {
       case Success(xml) => xml
       case Failure(e) => throw new RuntimeException(s"Error reading document: $pageOcrFile", e)
     }
 
-    val lines = pageParser.getLines(pageXml)
+    // Extract the tokens from the page
+    val lines = pageCorrector.getLines(pageXml)
     val tokens = lines.flatten
 
-    val tokenMap = mutable.LinkedHashMap.empty[String, HOCRToken]
-    tokens.foreach {
-      case hyphenatedToken: HyphenatedToken =>
-        tokenMap.put(hyphenatedToken.firstToken.id, hyphenatedToken)
-        tokenMap.put(hyphenatedToken.secondToken.id, hyphenatedToken)
+    // Run the correction algorithm on the extracted tokens
+    pageCorrector.correctTokens(tokens)
 
-      case token: HOCRToken =>
-        tokenMap.put(token.id, token)
-    }
-
-    correctTokens(tokens)
-
+    // Display the corrections made if debug mode is enabled
     if (logger.underlying.isDebugEnabled) {
       logger.debug("Corrections:")
       for (token <- tokens.withFilter(t => t.isMisspelled && t.bestUnformattedReplacement.isDefined))
         logger.debug("{} -> {}", token.text, token.bestReplacement.get)
     }
 
+    // Save stats about the transformation rules used to generate the corrections
     if (saveTransformationStats) {
       val transformStats = mutable.Map.empty[(String, String), Int]
       for (token <- tokens.withFilter(t => t.isMisspelled && t.bestUnformattedReplacement.isDefined)) {
@@ -271,200 +217,35 @@ object Main extends App with Logging {
       }
     }
 
-    def getProperties(s: String) = {
-      val Pattern = """(\S+) (.+)""".r
-      s.split(';').map(_.trim).collect { case Pattern(key, value) => (key, value) }.toMap
+    // Create the mapping between token ids to tokens
+    val tokensMap = tokens.foldLeft(Map.empty[String, HOCRToken])((map, token) => token match {
+      case hyphenatedToken: HyphenatedToken =>
+        map ++ List(hyphenatedToken.firstToken.id -> hyphenatedToken, hyphenatedToken.secondToken.id -> hyphenatedToken)
+
+      case token: HOCRToken => map + (token.id -> token)
+    })
+
+    // Create the ALTO XML representation of the corrected page
+    val preProcessingSoftware = (conf.preProcName.get, conf.preProcVer.get, conf.preProcVendor.get) match {
+      case (Some(name), Some(version), Some(vendor)) => Some(ProcessingSoftware(name, version, vendor))
+      case _ => None
     }
+    val postProcessingSoftware = (conf.appTitle, conf.appVersion, conf.appVendor) match {
+      case (Some(name), Some(version), Some(vendor)) => Some(ProcessingSoftware(name, version, vendor))
+      case _ => Some(ProcessingSoftware(
+        "PageCorrector",
+        "N/A",
+        "Illinois Informatics Institute, University of Illinois at Urbana-Champaign http://www.informatics.illinois.edu"
+      ))
+    }
+    val altoXml = AltoXml.create(pageXml, tokensMap, preProcessingSoftware, postProcessingSoftware)
 
-    val xpathFactory = XPathFactory.newInstance
-    val xpath = xpathFactory.newXPath
-
-    val pageNode = xpath.evaluate("/html/body/div[@class='ocr_page']",
-                   pageXml, XPathConstants.NODE).asInstanceOf[Element]
-    val pageProps = getProperties(pageNode.getAttribute("title"))
-    val tesseractVersion = xpath.evaluate("/html/head/meta[@name='ocr-system']/@content",
-                           pageXml, XPathConstants.STRING).toString
-    val DimPattern = """(\d+) (\d+) (\d+) (\d+)""".r
-
-    val altoXml =
-      <alto xmlns="http://schema.ccs-gmbh.com/ALTO"
-            xmlns:emop="http://emop.tamu.edu">
-        <Description>
-          <MeasurementUnit>pixel</MeasurementUnit>
-          <sourceImageInformation>
-            <filename>{ pageProps("image").stripPrefix("\"").stripSuffix("\"") }</filename>
-          </sourceImageInformation>
-          <OCRProcessing>
-            <preProcessingStep>
-              <processingSoftware>
-                <softwareCreator>The Early Modern OCR Project (eMOP) at Texas A&amp;M University. emop.tamu.edu</softwareCreator>
-                <softwareName>de-noising algorithm</softwareName>
-                <softwareVersion>1</softwareVersion>
-              </processingSoftware>
-            </preProcessingStep>
-            <ocrProcessingStep>
-              <processingSoftware>
-                <softwareCreator>Google</softwareCreator>
-                <softwareName>Tesseract</softwareName>
-                <softwareVersion>{ tesseractVersion }</softwareVersion>
-              </processingSoftware>
-            </ocrProcessingStep>
-            <postProcessingStep>
-              <processingSoftware>
-                <softwareCreator>The Software Environment for the Advancement for Scholarly Research (SEASR) at the University of Illinois, Urbana/Champaign. www.seasr.org</softwareCreator>
-                <softwareName>word correction</softwareName>
-                <softwareVersion>1</softwareVersion>
-              </processingSoftware>
-            </postProcessingStep>
-          </OCRProcessing>
-        </Description>
-        <Layout>
-          {
-          val (width, height) = pageProps("bbox") match {
-            case DimPattern(_, _, w, h) => (w.toInt, h.toInt)
-            case _ => (0, 0)
-          }
-          <Page ID={ pageNode.getAttribute("id") }
-                WIDTH={ s"$width" }
-                HEIGHT={ s"$height" }>
-            <PrintSpace>
-              {
-              for (parNode <- xpath.evaluate("div[@class='ocr_carea']/p[@class='ocr_par']",
-                              pageNode, XPathConstants.NODESET).asInstanceOf[NodeList])
-                yield {
-                  val parXml = parNode.asInstanceOf[Element]
-                  val parProps = getProperties(parXml.getAttribute("title"))
-                  val (parTop, parLeft, parBottom, parRight) = parProps("bbox") match {
-                    case DimPattern(t, l, b, r) => (t.toInt, l.toInt, b.toInt, r.toInt)
-                    case _ => (0, 0, 0, 0)
-                  }
-                  <TextBlock ID={ parXml.getAttribute("id") }
-                             WIDTH={ s"${parRight-parLeft}" }
-                             HEIGHT={ s"${parBottom-parTop}" }
-                             HPOS={ s"$parLeft" }
-                             VPOS={ s"$parTop" }>
-                    {
-                    for (lineNode <- xpath.evaluate("span[@class='ocr_line']",
-                                     parNode, XPathConstants.NODESET).asInstanceOf[NodeList])
-                      yield {
-                        val lineXml = lineNode.asInstanceOf[Element]
-                        val lineProps = getProperties(lineXml.getAttribute("title"))
-                        val (lineTop, lineLeft, lineBottom, lineRight) = lineProps("bbox") match {
-                          case DimPattern(t, l, b, r) => (t.toInt, l.toInt, b.toInt, r.toInt)
-                          case _ => (0, 0, 0, 0)
-                        }
-                        <TextLine ID={ lineXml.getAttribute("id") }
-                                  WIDTH={ s"${lineRight-lineLeft}" }
-                                  HEIGHT={ s"${lineBottom-lineTop}" }
-                                  HPOS={ s"$lineLeft" }
-                                  VPOS={ s"$lineTop" }>
-                          {
-                          var firstOnLine = true
-                          val wordNodes = xpath.evaluate("span[@class='ocrx_word']",
-                                          lineNode, XPathConstants.NODESET).asInstanceOf[NodeList].toIterator
-                          for (wordNode <- wordNodes)
-                            yield {
-                              val wordXml = wordNode.asInstanceOf[Element]
-                              val wordId = wordXml.getAttribute("id")
-                              val wordProps = getProperties(wordXml.getAttribute("title"))
-                              val (wordTop, wordLeft, wordBottom, wordRight) = wordProps("bbox") match {
-                                case DimPattern(t, l, b, r) => (t.toInt, l.toInt, b.toInt, r.toInt)
-                                case _ => (0, 0, 0, 0)
-                              }
-
-                              tokenMap.get(wordId) match {
-                                case Some(token) =>
-                                  val nodeBuffer = new xml.NodeBuffer
-                                  if (!firstOnLine)
-                                    nodeBuffer += <SP WIDTH="10"/>
-                                  else
-                                    firstOnLine = false
-
-                                  def add(n: Elem, c: Elem): Elem = n match { case e: Elem => e.copy(child = e.child ++ c) }
-
-                                  val (wordIsHyphenated, isFirstPartOfHyphen, subsContent, subsType, content) = token match {
-                                    case ht: HyphenatedToken if ht.isMisspelled =>
-                                      val replacement = ht.bestReplacement.getOrElse(ht.text)
-                                      val diff = ht.text.length - replacement.length
-                                      val hypPos = ht.firstToken.text.length-1 - (if (diff > 0) diff else 0)
-                                      val isFirstPart = ht.firstToken.id equals wordId
-                                      val (part, c) = if (isFirstPart)
-                                        ("HypPart1", replacement.take(hypPos)) else
-                                        ("HypPart2", replacement.substring(hypPos))
-                                      (true, isFirstPart, replacement, part, c)
-
-                                    case ht: HyphenatedToken =>
-                                      val isFirstPart = ht.firstToken.id equals wordId
-                                      val (part, c) = if (isFirstPart)
-                                        ("HypPart1", ht.firstToken.text.dropRight(1)) else
-                                        ("HypPart2", ht.secondToken.text)
-                                      (true, isFirstPart, ht.text, part, c)
-
-                                    case t: HOCRToken if t.isMisspelled =>
-                                      (false, false, null, null, t.bestReplacement.getOrElse(t.text))
-
-                                    case t: HOCRToken =>
-                                      (false, false, null, null, t.text)
-                                  }
-
-                                  var altoStringNode =
-                                      <String ID={wordId}
-                                              WIDTH={ s"${wordRight - wordLeft}" }
-                                              HEIGHT={ s"${wordBottom - wordTop}" }
-                                              HPOS={ s"$wordLeft" }
-                                              VPOS={ s"$wordTop" }
-                                              CONTENT={ content }
-                                              WC={ wordProps("x_wconf") }
-                                              emop:DNC="De-noising Confidence Value"/>
-
-                                  if (wordIsHyphenated)
-                                    altoStringNode = altoStringNode %
-                                      Attribute(null, "SUBS_CONTENT", subsContent,
-                                        Attribute(null, "SUBS_TYPE", subsType, Null))
-
-                                  // Add the alternatives
-                                  if (token.isMisspelled && content != token.text) {
-                                    import HOCRToken.preservePunctuationAndStyle
-
-                                    val alternatives =
-                                      mutable.LinkedHashSet(token.sortedContextMatches.map(_._1.toLowerCase): _*) ++
-                                      token.replacements.drop(1).map(_.toLowerCase)
-                                    for (alt <- alternatives.map(preservePunctuationAndStyle(token.text, _))
-                                                .filterNot(txt => (txt equals content) || (txt equals token.text))
-                                                .take(2)) { // only record max two correction alternatives
-                                      altoStringNode = add(altoStringNode, <ALTERNATIVE>{ alt }</ALTERNATIVE>)
-                                    }
-
-                                    altoStringNode = add(altoStringNode, <ALTERNATIVE>{ token.text }</ALTERNATIVE>)
-                                  }
-
-                                  nodeBuffer += altoStringNode
-
-                                  if (isFirstPartOfHyphen)
-                                    nodeBuffer += <HYP WIDTH="10" CONTENT="-"/>
-
-                                  nodeBuffer
-
-                                case None => NodeSeq.Empty
-                              }
-                            }
-                          }
-                        </TextLine>
-                      }
-                    }
-                  </TextBlock>
-                }
-              }
-            </PrintSpace>
-          </Page>
-          }
-        </Layout>
-      </alto>
-
+    // Write the ALTO XML output to file
     val prettyPrinter = new scala.xml.PrettyPrinter(80, 2)
     val prettyXml = prettyPrinter.format(altoXml)
     managed(new PrintWriter(outAltoXmlFile)) acquireAndGet (_.write(prettyXml))
 
+    // Write the text to file
     managed(new FileWriter(outAltoTxtFile)) acquireAndGet { txtFile =>
       for (line <- lines) {
         var skipEOL = false
@@ -491,6 +272,27 @@ object Main extends App with Logging {
         if (!skipEOL)
           txtFile.write("\n")
       }
+    }
+
+    if (showCorrectionStats) {
+      // Compute page correction statistics
+      val totalTokenCount = tokens.size
+      val ignoredCount = tokens.count(!_.isCorrectable)
+      val correctCount = tokens.count(!_.isMisspelled) - ignoredCount
+      val correctedCount = tokens.count(t => t.isMisspelled && t.bestUnformattedReplacement.isDefined)
+      val unchangedCount = tokens.count(t => t.isMisspelled && t.bestUnformattedReplacement.isEmpty)
+
+      assert(totalTokenCount == ignoredCount + correctCount + correctedCount + unchangedCount,
+        "Correction statistics sanity check failed")
+
+      val jsonStats =
+        ("total" -> totalTokenCount) ~
+          ("ignored" -> ignoredCount) ~
+          ("correct" -> correctCount) ~
+          ("corrected" -> correctedCount) ~
+          ("unchanged" -> unchangedCount)
+
+      println(compactRender(jsonStats))
     }
   }
 }

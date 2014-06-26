@@ -89,7 +89,7 @@ trait TextTransformer {
     getPossibleTransformations(text)
       .take(maxTransformCount)
       .powerSet
-      .withFilter(t => t.nonEmpty && !hasOverlappedTransformations(t))
+      .withFilter(!hasOverlappedTransformations(_))
       .map(adjustTransformationIndexes)
       .map(transform(text, _))
 }

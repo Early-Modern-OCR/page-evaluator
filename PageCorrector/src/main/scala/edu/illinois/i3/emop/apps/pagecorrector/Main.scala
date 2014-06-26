@@ -109,6 +109,11 @@ object Main extends App with Logging {
         default = Some(false)
     )
 
+    val dumpCorrectionDetails = opt[Boolean]("dump",
+        descr = "Dump details of the corrections made and corrections missed to individual files",
+        default = Some(false)
+    )
+
     val showCorrectionStats = opt[Boolean]("stats",
         descr = "Print correction statistics in JSON format, at the end",
         default = Some(false)
@@ -144,6 +149,7 @@ object Main extends App with Logging {
   val outputDir = conf.outputDir()
   val saveTransformationStats = conf.saveTransformationStats()
   val showCorrectionStats = conf.showCorrectionStats()
+  val dumpCorrectionDetails = conf.dumpCorrectionDetails()
 
   // Define the output files
   val pageOcrName = pageOcrFile.getName.substring(0, pageOcrFile.getName.lastIndexOf('.'))
@@ -183,17 +189,21 @@ object Main extends App with Logging {
     // Run the correction algorithm on the extracted tokens
     pageCorrector.correctTokens(tokens)
 
+    // Record the corrected and unchanged tokens
+    lazy val correctedTokens = tokens.filter(t => t.isMisspelled && t.bestReplacement.isDefined)
+    lazy val unchangedTokens = tokens.filter(t => t.isMisspelled && t.bestReplacement.isEmpty)
+
     // Display the corrections made if debug mode is enabled
     if (logger.underlying.isDebugEnabled) {
       logger.debug("Corrections:")
-      for (token <- tokens.withFilter(t => t.isMisspelled && t.bestUnformattedReplacement.isDefined))
+      for (token <- correctedTokens)
         logger.debug("{} -> {}", token.text, token.bestReplacement.get)
     }
 
     // Save stats about the transformation rules used to generate the corrections
     if (saveTransformationStats) {
       val transformStats = mutable.Map.empty[(String, String), Int]
-      for (token <- tokens.withFilter(t => t.isMisspelled && t.bestUnformattedReplacement.isDefined)) {
+      for (token <- correctedTokens) {
         val replacement = token.bestUnformattedReplacement.get
         token.correctTransformations.find(_.text equalsIgnoreCase replacement) match {
           case Some(TransformedText(_, _, transformations)) =>
@@ -253,8 +263,8 @@ object Main extends App with Logging {
         line.foreach {
           case hyphenatedToken: HyphenatedToken if hyphenatedToken.isMisspelled =>
             val replacement = hyphenatedToken.bestReplacement.getOrElse(hyphenatedToken.text)
-            val hyphenText = replacement.take(hyphenatedToken.firstToken.text.length - 1) concat "-\n" concat
-              replacement.substring(hyphenatedToken.firstToken.text.length - 1)
+            val hypPos = Math.max(hyphenatedToken.firstToken.text.length - 1, 0)
+            val hyphenText = replacement.take(hypPos) concat "-\n" concat replacement.substring(hypPos)
             skipEOL = true
             txtFile.write(s"$hyphenText ")
 
@@ -274,13 +284,29 @@ object Main extends App with Logging {
       }
     }
 
+    if (dumpCorrectionDetails) {
+      val outCorrectionsFile = new File(outputDir, s"${pageOcrName}_ALTO.txt.corrected")
+      val outUnchangedFile = new File(outputDir, s"${pageOcrName}_ALTO.txt.unchanged")
+
+      managed(new FileWriter(outCorrectionsFile)) acquireAndGet { correctionsFile =>
+        correctionsFile.write("orig\tcorrected\n")
+        for (token <- correctedTokens)
+          correctionsFile.write(s"${token.text}\t${token.bestReplacement.get}\n")
+      }
+
+      managed(new FileWriter(outUnchangedFile)) acquireAndGet { unchangedFile =>
+        for (token <- unchangedTokens)
+          unchangedFile.write(s"${token.text}\n")
+      }
+    }
+
     if (showCorrectionStats) {
       // Compute page correction statistics
       val totalTokenCount = tokens.size
       val ignoredCount = tokens.count(!_.isCorrectable)
       val correctCount = tokens.count(!_.isMisspelled) - ignoredCount
-      val correctedCount = tokens.count(t => t.isMisspelled && t.bestUnformattedReplacement.isDefined)
-      val unchangedCount = tokens.count(t => t.isMisspelled && t.bestUnformattedReplacement.isEmpty)
+      val correctedCount = correctedTokens.size
+      val unchangedCount = unchangedTokens.size
 
       assert(totalTokenCount == ignoredCount + correctCount + correctedCount + unchangedCount,
         "Correction statistics sanity check failed")

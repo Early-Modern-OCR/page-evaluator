@@ -135,7 +135,7 @@ object AltoXml {
                             case ht: HyphenatedToken if ht.isMisspelled =>
                               val replacement = ht.bestReplacement.getOrElse(ht.text)
                               val diff = ht.text.length - replacement.length
-                              val hypPos = ht.firstToken.text.length-1 - (if (diff > 0) diff else 0)
+                              val hypPos = Math.max(ht.firstToken.text.length-1 - (if (diff > 0) diff else 0), 0)
                               val isFirstPart = ht.firstToken.id equals wordId
                               val (part, c) = if (isFirstPart)
                                 ("HypPart1", replacement.take(hypPos)) else
@@ -172,12 +172,12 @@ object AltoXml {
                                 Attribute(null, "SUBS_TYPE", subsType, Null))
 
                           // Add the alternatives
-                          if (token.isMisspelled && content != token.text) {
+                          if (token.isMisspelled && token.bestReplacement.isDefined) {
                             import HOCRToken.preservePunctuationAndStyle
 
                             val alternatives =
                               mutable.LinkedHashSet(token.sortedContextMatches.map(_._1.toLowerCase): _*) ++
-                                token.replacements.drop(1).map(_.toLowerCase)
+                                token.replacements.drop(token.defaultReplacementsCount).map(_.toLowerCase)
 
                             for (alt <- alternatives.map(preservePunctuationAndStyle(token.text, _))
                               .filterNot(txt => (txt equals content) || (txt equals token.text))

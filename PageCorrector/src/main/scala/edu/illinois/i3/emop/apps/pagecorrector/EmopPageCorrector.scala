@@ -53,26 +53,26 @@ class EmopPageCorrector(val dictionaries: Iterable[SpellDictionary],
         // find candidates for the first token in the window, if misspelled
         val ngram1 = if (token1.isMisspelled) {
           logger.debug("Finding candidate replacements for {}", token1)
-          replacementCache.getOrElseUpdate(token1.cleanedText, {
+          replacementCache.getOrElseUpdate(token1.correctableText, {
             token1.replacements.map(_.toLowerCase).toSet
           })
-        } else Set(token1.cleanedText)
+        } else Set(token1.correctableText)
 
         // find candidates for the second token in the window, if misspelled
         val ngram2 = if (token2.isMisspelled) {
           logger.debug("Finding candidate replacements for {}", token2)
-          replacementCache.getOrElseUpdate(token2.cleanedText, {
+          replacementCache.getOrElseUpdate(token2.correctableText, {
             token2.replacements.map(_.toLowerCase).toSet
           })
-        } else Set(token2.cleanedText)
+        } else Set(token2.correctableText)
 
         // find candidates for the third token in the window, if misspelled
         val ngram3 = if (token3.isMisspelled) {
           logger.debug("Finding candidate replacements for {}", token3)
-          replacementCache.getOrElseUpdate(token3.cleanedText, {
+          replacementCache.getOrElseUpdate(token3.correctableText, {
             token3.replacements.map(_.toLowerCase).toSet
           })
-        } else Set(token3.cleanedText)
+        } else Set(token3.correctableText)
 
         // check if we found candidates (ignore if not)
         if (ngram1.size + ngram2.size + ngram3.size > 3) {

@@ -92,4 +92,42 @@ trait TextTransformer {
       .withFilter(!hasOverlappedTransformations(_))
       .map(adjustTransformationIndexes)
       .map(transform(text, _))
+
+  /**
+   * Finds all the longest (start,end) pairs of indices into the given text delimiting transformable text
+   *
+   * @param text The text
+   * @param nonTransformableCharTolerance How many non-transformable characters to allow to be included in the (start,end) sequences found (default = 0)
+   * @return The longest (start,end) pairs of indices into the given text delimiting transformable text
+   */
+  def findTransformableParts(text: String, nonTransformableCharTolerance: Int = 0) = {
+    val ruleCover = transformRules.keys.withFilter(text.contains(_)).flatMap(err =>
+      (0 until text.length).collect { case i if text.substring(i).startsWith(err) => (i, i+err.length) })
+    val charCover = text.zipWithIndex.collect { case (c, i) if c.isLetter => (i, i+1) }
+    val cover = Set(charCover ++ ruleCover: _*)
+    var parts = cover
+
+    while (parts.exists(x => cover.exists(y => x._1 == y._2 || x._2 == y._1))) {
+      parts = parts.flatMap {
+        case x @ (a, b) =>
+          val res = cover.collect {
+            case (c, d) if a == d => (c, b)
+            case (c, d) if b == c => (a, d)
+          }
+          if (res.isEmpty) Set(x) else res
+      }
+    }
+
+    import edu.illinois.i3.scala.utils.collections.::>
+    import Math.{min,max}
+
+    parts.toSeq.sorted.foldLeft(List.empty[List[(Int,Int)]])((acc, x) => acc match {
+      case Nil => List(List(x))
+      case init ::> last if x._1 - last.last._2 <= nonTransformableCharTolerance => init :+ (last match {
+        case i ::> l if x._1 > l._2 => last :+ x
+        case i ::> l => i :+ (min(l._1, x._1), max(l._2, x._2))
+      })
+      case lst => lst :+ List(x)
+    })
+  }
 }

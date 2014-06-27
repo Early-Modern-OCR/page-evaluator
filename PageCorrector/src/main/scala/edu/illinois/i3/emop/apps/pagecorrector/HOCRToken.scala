@@ -40,35 +40,7 @@ abstract class HOCRToken(id: String, text: String) extends OCRToken(id, text) wi
    * Finds the longest contiguous substrings (start,end)-pairs of the original token text that can
    * potentially be corrected (taking into account the provided transformations)
    */
-  protected lazy val correctableParts = {
-    val ruleCover = transformRules.keys.withFilter(text.contains(_)).flatMap(err =>
-      (0 until text.length).collect { case i if text.substring(i).startsWith(err) => (i, i+err.length) })
-    val charCover = text.zipWithIndex.collect { case (c, i) if c.isLetter => (i, i+1) }
-    val cover = Set(charCover ++ ruleCover: _*)
-    var parts = cover
-
-    while (parts.exists(x => cover.exists(y => x._1 == y._2 || x._2 == y._1))) {
-      parts = parts.flatMap {
-        case x @ (a, b) =>
-          val res = cover.collect {
-            case (c, d) if a == d => (c, b)
-            case (c, d) if b == c => (a, d)
-          }
-          if (res.isEmpty) Set(x) else res
-      }
-    }
-
-    import Math.{min,max}
-
-    parts.toSeq.sorted.foldLeft(List.empty[List[(Int,Int)]])((acc, x) => acc match {
-      case Nil => List(List(x))
-      case init ::> last if x._1 - last.last._2 <= MAX_NONTRANSFORMABLE_CHARS_ALLOWED => init :+ (last match {
-        case i ::> l if x._1 > l._2 => last :+ x
-        case i ::> l => i :+ (min(l._1, x._1), max(l._2, x._2))
-      })
-      case lst => lst :+ List(x)
-    })
-  }
+  protected lazy val correctableParts = findTransformableParts(text, MAX_NONTRANSFORMABLE_CHARS_ALLOWED)
 
   protected lazy val bestCorrectablePart = {
     implicit val ordering = new Ordering[List[(Int,Int)]] {
@@ -123,25 +95,22 @@ abstract class HOCRToken(id: String, text: String) extends OCRToken(id, text) wi
    * to account for situations when the original token is correct but the dictionary does not know about it <br>
    * Note: The original (cleaned) token is always first in the set of replacements
    */
-  lazy val replacements = {
-    lazy val transformCorrections = correctTransformations.map(_.text)
-
+  lazy val replacements =
     if (isMisspelled) {
+      val transformCorrections = correctTransformations.map(_.text)
       var combined = defaultReplacements ++ transformCorrections
       if (transformCorrections.size != 1) combined ++= dictSuggestions
       combined
     } else
       defaultReplacements
-  }
 
   /**
    * Stores the correct replacements of the token based on all possible transformations to its cleaned version
    */
   lazy val correctTransformations = {
-    val spanTransforms = bestCorrectablePart.map(span => text.substring(span._1, span._2)).map(transformations(_))
-    val interSpanChars = bestCorrectablePart.sliding(2).collect {
-      case List((_,b), (c,_)) => text.substring(b, c)
-    }.toList
+    val interSpanChars = bestCorrectablePart.sliding(2).collect { case List((_,b), (c,_)) => text.substring(b, c) }.toList
+
+    def spanToText(spans: List[(Int,Int)]) = spans.sorted.map { case (s, e) => text.substring(s, e) }.mkString
 
     def join(t1: Seq[TransformedText], t2: Seq[TransformedText], sep: String = ""): Seq[TransformedText] =
       for { left <- t1; right <- t2 }
@@ -152,17 +121,31 @@ abstract class HOCRToken(id: String, text: String) extends OCRToken(id, text) wi
           right.transformations.map(t => t.copy(index = t.index + left.original.length + sep.length))
       )
 
-    def combineTransforms(t: List[Seq[TransformedText]]) =
-      t.reduceLeft((transformAcc, transform) => join(transformAcc, transform))
-
     val transforms = interSpanChars match {
-      case Nil => combineTransforms(spanTransforms)
-      // Treat tokens ending in '<char> specially
-      case init ::> last if last equals "'" => join(combineTransforms(spanTransforms.init), spanTransforms.last, "'")
-      case _ => combineTransforms(spanTransforms)
+      case spanChars if spanChars.isEmpty || spanChars.forall(_ equals "-") => transformations(correctableText)
+      case _ ::> last if last equals "'" =>
+        join(
+          transformations(spanToText(bestCorrectablePart.init)),
+          transformations(spanToText(List(bestCorrectablePart.last))),
+          "'"
+        )
+      case _ => transformations(spanToText(bestCorrectablePart))
     }
 
-    transforms.filter(p => p.text.length >= CORRECTABLE_TOKEN_LEN_THRESHOLD && isCorrect(p.text))
+//    val spanTransforms = bestCorrectablePart.map(span => text.substring(span._1, span._2)).map(transformations(_))
+//
+//
+//    def combineTransforms(t: List[Seq[TransformedText]]) =
+//      t.reduceLeft((transformAcc, transform) => join(transformAcc, transform))
+//
+//    val transforms = interSpanChars match {
+//      case Nil => combineTransforms(spanTransforms)
+//      // Treat tokens ending in '<char> specially
+//      case init ::> last if last equals "'" => join(combineTransforms(spanTransforms.init), spanTransforms.last, "'")
+//      case _ => combineTransforms(spanTransforms)
+//    }
+
+    transforms.filter(t => t.text.length >= CORRECTABLE_TOKEN_LEN_THRESHOLD && isCorrect(t.text))
   }
 
   /**

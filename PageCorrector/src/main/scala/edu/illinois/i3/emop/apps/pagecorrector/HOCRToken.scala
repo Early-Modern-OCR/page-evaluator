@@ -9,11 +9,9 @@ object HOCRToken {
   import java.util.regex.Pattern
 
   protected val CORRECTABLE_TOKEN_LEN_THRESHOLD = 3
-  protected val HEUR_MIN_NO_PUNCT_LEN = 2
-  protected val MAX_NONTRANSFORMABLE_CHARS = 2
+  protected val MAX_NONTRANSFORMABLE_CHARS_ALLOWED = 2
   protected val MAX_DICT_SUGGESTION_LEVENSHTEIN = 200
-  protected val BEGIN_PUNCT_CHARS = Set('(', '[', '{', '\'', '"')
-  protected val END_PUNCT_CHARS = Set(')', ']', '}', '\'', '"', '.', ';', ':', '!', '?')
+  protected val BEGIN_PUNCT_ALLOWED = Set('(', '[', '{', '\'', '"')
 
   protected val AlphaPattern = Pattern.compile("\\p{L}", Pattern.CANON_EQ)
   protected val Repeated4orMoreCharsPattern = Pattern.compile("(\\P{N})\\1{3,}", Pattern.CANON_EQ)
@@ -30,7 +28,7 @@ object HOCRToken {
       case (_, true) => s"${replacementText.head.toUpper}${replacementText.tail}"
       case _ => replacementText
     }
-    val keepBeginPunct = beginPunct.reverse.takeWhile(BEGIN_PUNCT_CHARS.contains).reverse
+    val keepBeginPunct = beginPunct.reverse.takeWhile(BEGIN_PUNCT_ALLOWED.contains).reverse
     keepBeginPunct concat replacement concat endPunct
   }
 }
@@ -64,7 +62,7 @@ abstract class HOCRToken(id: String, text: String) extends OCRToken(id, text) wi
 
     parts.toSeq.sorted.foldLeft(List.empty[List[(Int,Int)]])((acc, x) => acc match {
       case Nil => List(List(x))
-      case init ::> last if x._1 - last.last._2 <= MAX_NONTRANSFORMABLE_CHARS => init :+ (last match {
+      case init ::> last if x._1 - last.last._2 <= MAX_NONTRANSFORMABLE_CHARS_ALLOWED => init :+ (last match {
         case i ::> l if x._1 > l._2 => last :+ x
         case i ::> l => i :+ (min(l._1, x._1), max(l._2, x._2))
       })
@@ -173,24 +171,6 @@ abstract class HOCRToken(id: String, text: String) extends OCRToken(id, text) wi
   lazy val dictSuggestions = getSuggestions(correctableText, MAX_DICT_SUGGESTION_LEVENSHTEIN).collect {
     case suggestion if suggestion.getWord.length >= CORRECTABLE_TOKEN_LEN_THRESHOLD => suggestion.getWord
   }
-
-//  /**
-//   * Stores replacement candidates generated based on heuristics
-//   */
-//  lazy val heuristicReplacements = {
-//    var candidates = Set.empty[String]
-//
-//    // remove all punctuation and check whether resulting text is a dictionary word of length at least 3
-//    val noPunctText = text.collect { case c: Char if c.isLetterOrDigit => c }
-//    if (noPunctText.length != correctableText.length && noPunctText.length > HEUR_MIN_NO_PUNCT_LEN) {
-//      if (isCorrect(noPunctText))
-//        candidates += noPunctText
-//      else
-//        candidates ++= transformations(noPunctText).map(_.text).filter(isCorrect)
-//    }
-//
-//    candidates
-//  }
 
   /**
    * Stores whether the token is misspelled.  If a token is not correctable,

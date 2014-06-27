@@ -47,7 +47,7 @@ class EmopPageCorrector(val dictionaries: Iterable[SpellDictionary],
 
     // use a sliding window of 3 tokens (3-grams) to find windows containing misspelled tokens that need to be corrected
     tokens.sliding(3).withFilter(_.exists(_.isMisspelled)).foreach {
-      case window@Seq(token1, token2, token3) =>
+      case window @ Seq(token1, token2, token3) =>
         logger.debug("window: {} {} {}", token1, token2, token3)
 
         // find candidates for the first token in the window, if misspelled

@@ -263,8 +263,16 @@ object Main extends App with Logging {
         line.foreach {
           case hyphenatedToken: HyphenatedToken if hyphenatedToken.isMisspelled =>
             val replacement = hyphenatedToken.bestReplacement.getOrElse(hyphenatedToken.text)
-            val hypPos = Math.max(hyphenatedToken.firstToken.text.length - 1, 0)
-            val hyphenText = replacement.take(hypPos) concat "-\n" concat replacement.substring(hypPos)
+            var hypPos = hyphenatedToken.firstToken.text.length-1
+            if (replacement.length < hypPos)
+              hypPos = replacement.length
+            var hyphenText = "";
+            try {
+              hyphenText = replacement.take(hypPos) concat "-\n" concat replacement.substring(hypPos)
+            }
+            catch {
+              case e: Exception => println(s"f: ${hyphenatedToken.firstToken.text} s: ${hyphenatedToken.secondToken.text} r: $replacement pos: $hypPos --> $e");
+            }
             skipEOL = true
             txtFile.write(s"$hyphenText ")
 

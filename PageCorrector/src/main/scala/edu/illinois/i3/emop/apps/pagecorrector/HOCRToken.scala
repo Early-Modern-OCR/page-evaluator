@@ -87,7 +87,14 @@ abstract class HOCRToken(id: String, text: String) extends OCRToken(id, text) wi
       !has4orMoreRepeatedChars
   }
 
-  protected lazy val defaultReplacements = Seq(correctableText, correctableText.collect { case c if c.isLetter => c })
+  protected lazy val correctableTextWithoutPunctuation = correctableText.collect { case c if c.isLetter => c }
+  
+  /**
+   * Use the original token and the token with all punctuation removed as potential replacements to allow the context
+   * matching to pick them as "good" if they happen to be correct words that do not exist in our dictionaries (since all
+   * other suggestions our algorithm makes are only words in the dictionary)
+   */
+  protected lazy val defaultReplacements = Seq(correctableText, correctableTextWithoutPunctuation)
   lazy val defaultReplacementsCount = defaultReplacements.size
 
   /**
@@ -180,9 +187,17 @@ abstract class HOCRToken(id: String, text: String) extends OCRToken(id, text) wi
   })
 
   def bestUnformattedReplacement = sortedContextMatches.map(_._1).headOption match {
+    // context matches always win
     case m @ Some(bestMatch) => m
     // if there were no context matches, but there's only one correction possible (outside of the default ones) then return that
     case None if replacements.size - defaultReplacementsCount == 1 =>  Some(replacements.last)
+    // if we end up with only the default replacements, check to see if exactly one of them is correct and use that, otherwise leave as-is
+    case None if replacements.size == defaultReplacementsCount && defaultReplacements.tail.count(isCorrect) == 1 =>
+      defaultReplacements.tail.find(isCorrect)
+    // if we have more than one suggestion in addition to the defaults and context does not have any matches, then
+    // look at the default suggestion created by removing all punctuation, and if that is a correct word, make that
+    // as correction since it's likely the correct replacement
+    case None if isCorrect(correctableTextWithoutPunctuation) => Some(correctableTextWithoutPunctuation)
     case _ => None
   }
 

@@ -135,7 +135,9 @@ object AltoXml {
                             case ht: HyphenatedToken if ht.isMisspelled =>
                               val replacement = ht.bestReplacement.getOrElse(ht.text)
                               val diff = ht.text.length - replacement.length
-                              val hypPos = Math.max(ht.firstToken.text.length-1 - (if (diff > 0) diff else 0), 0)
+                              var hypPos = ht.firstToken.text.length-1
+                              if (replacement.length < hypPos)
+                                hypPos = replacement.length
                               val isFirstPart = ht.firstToken.id equals wordId
                               val (part, c) = if (isFirstPart)
                                 ("HypPart1", replacement.take(hypPos)) else

@@ -18,7 +18,7 @@ import scala.util.{Failure, Success}
 class EmopPageCorrector(val dictionaries: Iterable[SpellDictionary],
                         val transformRules: TextTransformer.TransformRules,
                         val contextChecker: NgramContextMatcher)
-  extends HOCRPageParser with LineCleaner with HyphenatedTokenJoiner with Logging {
+  extends HOCRPageParser with LineCleaner with UTF8Normalizer with HyphenatedTokenJoiner with Logging {
   corrector =>
 
   override type TokenType = HOCRToken
@@ -26,7 +26,7 @@ class EmopPageCorrector(val dictionaries: Iterable[SpellDictionary],
 
   protected override def createToken(xmlWord: Element) = {
     val id = xmlWord.getAttribute("id")
-    val text = xmlWord.getTextContent
+    val text = normalizeUTF8(xmlWord.getTextContent)
     new HOCRToken(id, text) {
       override val dictionaries = corrector.dictionaries
       override val transformRules = corrector.transformRules

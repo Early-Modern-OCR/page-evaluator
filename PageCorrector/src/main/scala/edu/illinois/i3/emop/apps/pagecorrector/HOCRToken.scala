@@ -9,6 +9,7 @@ object HOCRToken {
   import java.util.regex.Pattern
 
   protected val CORRECTABLE_TOKEN_LEN_THRESHOLD = 3
+  protected val REPLACED_CHARS_THRESHOLD = 0.6
   protected val MAX_NONTRANSFORMABLE_CHARS_ALLOWED = 2
   protected val MAX_DICT_SUGGESTION_LEVENSHTEIN = 200
   protected val BEGIN_PUNCT_ALLOWED = Set('(', '[', '{', '\'', '"')
@@ -130,7 +131,7 @@ abstract class HOCRToken(id: String, text: String) extends OCRToken(id, text) wi
 
     val transforms = interSpanChars match {
       case spanChars if spanChars.isEmpty || spanChars.forall(_ equals "-") => transformations(correctableText)
-      case _ ::> last if last equals "'" =>
+      case _ ::> last if last == "'" && bestCorrectablePart.last._2 - bestCorrectablePart.last._1 < 4 =>
         join(
           transformations(spanToText(bestCorrectablePart.init)),
           transformations(spanToText(List(bestCorrectablePart.last))),
@@ -170,8 +171,8 @@ abstract class HOCRToken(id: String, text: String) extends OCRToken(id, text) wi
 
   protected val contextMatches = mutable.HashMap.empty[String, mutable.HashSet[TokenContextMatch]]
 
-  def addContextMatch(position: Int, text: String, matchCount: Int, volCount: Int) {
-    contextMatches.getOrElseUpdate(text, { mutable.HashSet.empty[TokenContextMatch] }) +=
+  def addContextMatch(position: Int, matchText: String, matchCount: Int, volCount: Int) {
+    contextMatches.getOrElseUpdate(matchText, { mutable.HashSet.empty[TokenContextMatch] }) +=
       TokenContextMatch(position, matchCount, volCount)
   }
 
@@ -190,7 +191,13 @@ abstract class HOCRToken(id: String, text: String) extends OCRToken(id, text) wi
     // context matches always win
     case m @ Some(bestMatch) => m
     // if there were no context matches, but there's only one correction possible (outside of the default ones) then return that
-    case None if replacements.size - defaultReplacementsCount == 1 =>  Some(replacements.last)
+    case None if replacements.size - defaultReplacementsCount == 1 =>
+      val replacement = replacements.last
+      val replacedCharsCount = correctableText.length - correctableText.intersect(replacement).length
+      if (replacedCharsCount.toFloat / correctableText.length <= REPLACED_CHARS_THRESHOLD)
+        Some(replacements.last)
+      else
+        None
     // if we end up with only the default replacements, check to see if exactly one of them is correct and use that, otherwise leave as-is
     case None if replacements.size == defaultReplacementsCount && defaultReplacements.tail.count(isCorrect) == 1 =>
       defaultReplacements.tail.find(isCorrect)

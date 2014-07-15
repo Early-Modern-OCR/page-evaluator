@@ -5,6 +5,7 @@ import edu.illinois.i3.emop.apps.pageevaluator.OCRPage;
 import edu.illinois.i3.emop.apps.pageevaluator.exceptions.PageParserException;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 
 import javax.xml.parsers.DocumentBuilder;
@@ -49,7 +50,8 @@ public class HOCRPage extends OCRPage<HOCRPageStats> {
             String capabilities = (String) xpath.evaluate("/html/head/meta[@name='ocr-capabilities']/@content", document, XPathConstants.STRING);
             ocrCapabilities.addAll(Arrays.asList(capabilities.split(" ")));
 
-            Element pageXml = (Element) xpath.evaluate("//*[@class='ocr_page']", document, XPathConstants.NODE);
+            NodeList pagesXml = (NodeList) xpath.evaluate("//*[@class='ocr_page']", document, XPathConstants.NODESET);
+            Element pageXml = (Element) pagesXml.item(0);  // we only consider the first page
             String pageId = pageXml.getAttribute("id");
 
             return new HOCRPage(pageId, pageXml, ocrEngine, ocrCapabilities);

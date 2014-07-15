@@ -61,22 +61,23 @@ public class HOCRTokenIterator extends AbstractIterator<HOCRToken> implements It
         _currentTokenIndex++;
 
         if (_currentTokenIndex >= _currentLineTokenCount) {
-            // No more tokens on current line - try to advance to next line
-            _currentLineIndex++;
-            _currentTokenIndex = 0;
+            do {
+                // No more tokens on current line - try to advance to next line
+                _currentLineIndex++;
+                _currentTokenIndex = 0;
 
-            if (_currentLineIndex < _lineCount) {
-                Node currentLineXml = _lines.item(_currentLineIndex);
-                try {
-                    _currentLineTokens = (NodeList) _xpathToken.evaluate(currentLineXml, XPathConstants.NODESET);
-                    _currentLineTokenCount = _currentLineTokens.getLength();
-                }
-                catch (XPathExpressionException e) {
-                    throw new RuntimeException(e);
-                }
-            } else
-                // No more lines
-                _currentLineTokens = null;
+                if (_currentLineIndex < _lineCount) {
+                    Node currentLineXml = _lines.item(_currentLineIndex);
+                    try {
+                        _currentLineTokens = (NodeList) _xpathToken.evaluate(currentLineXml, XPathConstants.NODESET);
+                        _currentLineTokenCount = _currentLineTokens.getLength();
+                    } catch (XPathExpressionException e) {
+                        throw new RuntimeException(e);
+                    }
+                } else
+                    // No more lines
+                    _currentLineTokens = null;
+            } while (_currentLineTokenCount == 0 && _currentLineTokens != null);
         }
     }
 }

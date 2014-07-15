@@ -79,10 +79,10 @@ object Main extends App with Logging {
           vendor => s"$name $version\n$vendor"))).getOrElse("PageCorrector"))
 
     // Database connection parameters
-    val dbUrl = opt[String]("db", descr = "The DB connection URL", required = true)
-    val dbUser = opt[String]("user", descr = "The DB user name")
-    val dbPassword = opt[String]("password", descr = "The DB user password")
-    dependsOnAll(dbUrl, List(dbUser, dbPassword))
+    val dbConfFile = opt[File]("dbconf",
+      noshort = true,
+      descr = "Database configuration properties file",
+      required = true)
 
     // Transformation rules
     val transformRules = opt[TransformRules]("transform",
@@ -140,9 +140,7 @@ object Main extends App with Logging {
 
   // Parse the command line args and extract values
   val conf = new Conf(args)
-  val dbUrl = conf.dbUrl()
-  val dbUser = conf.dbUser()
-  val dbPasswd = conf.dbPassword()
+  val dbConfFile = conf.dbConfFile()
   val transformRules = conf.transformRules()
   val dictionaries = conf.dictionaries()
   val pageOcrFile = conf.pageOcrFile()
@@ -155,6 +153,18 @@ object Main extends App with Logging {
   val pageOcrName = pageOcrFile.getName.substring(0, pageOcrFile.getName.lastIndexOf('.'))
   val outAltoXmlFile = new File(outputDir, s"${pageOcrName}_ALTO.xml")
   val outAltoTxtFile = new File(outputDir, s"${pageOcrName}_ALTO.txt")
+
+  // Load the database configuration
+  val dbConf = new java.util.Properties()
+  managed(Source.fromFile(dbConfFile).bufferedReader()).acquireAndGet(dbConf.load)
+
+  val dbUrl = {
+    val dbHost = dbConf.getProperty("db_host", "localhost")
+    val dbName = dbConf.getProperty("db_ngrams")
+    s"jdbc:mysql://$dbHost/$dbName"
+  }
+  val dbUser = dbConf.getProperty("db_user")
+  val dbPasswd = dbConf.getProperty("db_pass")
 
   // Create the DB connection pool
   val connPool = {

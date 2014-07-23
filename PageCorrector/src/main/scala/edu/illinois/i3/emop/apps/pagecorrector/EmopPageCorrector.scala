@@ -17,7 +17,8 @@ import scala.util.{Failure, Success}
  */
 class EmopPageCorrector(val dictionaries: Iterable[SpellDictionary],
                         val transformRules: TextTransformer.TransformRules,
-                        val contextChecker: NgramContextMatcher)
+                        val contextChecker: NgramContextMatcher,
+                        val noiseCutoff: Float)
   extends HOCRPageParser with LineCleaner with UTF8Normalizer with HyphenatedTokenJoiner with Logging {
   corrector =>
 
@@ -26,8 +27,13 @@ class EmopPageCorrector(val dictionaries: Iterable[SpellDictionary],
 
   protected override def createToken(xmlWord: Element) = {
     val id = xmlWord.getAttribute("id")
+    val props = getProperties(xmlWord.getAttribute("title"))
+    val noiseConf = props.getOrElse("noiseConf", "0") match {
+      case "NaN" => 0f
+      case value => value.toFloat
+    }
     val text = normalizeUTF8(xmlWord.getTextContent)
-    new HOCRToken(id, text) {
+    new HOCRToken(id, text, noiseConf) {
       override val dictionaries = corrector.dictionaries
       override val transformRules = corrector.transformRules
     }
@@ -39,7 +45,8 @@ class EmopPageCorrector(val dictionaries: Iterable[SpellDictionary],
       override val transformRules = corrector.transformRules
     }
 
-  override def getLines(document: Document) = joinHyphenatedTokens(cleanLines(super.getLines(document)))
+  override def getLines(document: Document) =
+    joinHyphenatedTokens(cleanLines(super.getLines(document).map(_.filter(_.noiseConf < noiseCutoff || noiseCutoff == 0))))
 
   def correctTokens(tokens: Seq[HOCRToken]) {
     // keep a cache of already calculated candidate replacements (not absolutely necessary to do this, but...)
@@ -102,4 +109,10 @@ class EmopPageCorrector(val dictionaries: Iterable[SpellDictionary],
       case _ => // skip context matching if page has < 3 tokens
     }
   }
+
+  private def getProperties(s: String) = {
+    val Pattern = """(\S+) (.+)""".r
+    s.split(';').map(_.trim).collect { case Pattern(key, value) => (key, value) }.toMap
+  }
+
 }

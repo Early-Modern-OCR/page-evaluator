@@ -136,6 +136,13 @@ object Main extends App with Logging {
         descr = "The name of the vendor of the software used in the pre-processing step",
         default = None
     )
+
+    val noiseCutoff = opt[Float]("noiseCutoff",
+        descr = "The noise probability cutoff value. " +
+          "Tokens with noise probability higher than this value will be removed before correction. " +
+          "Set to 0 to disable the removal of noisy tokens.",
+        default = Some(0.5f)
+    )
   }
 
   // Parse the command line args and extract values
@@ -148,6 +155,7 @@ object Main extends App with Logging {
   val saveTransformationStats = conf.saveTransformationStats()
   val showCorrectionStats = conf.showCorrectionStats()
   val dumpCorrectionDetails = conf.dumpCorrectionDetails()
+  val noiseCutoff = conf.noiseCutoff()
 
   // Define the output files
   val pageOcrName = pageOcrFile.getName.substring(0, pageOcrFile.getName.lastIndexOf('.'))
@@ -184,7 +192,7 @@ object Main extends App with Logging {
 
   managed(Source.fromFile(pageOcrFile).bufferedReader()).acquireAndGet { reader =>
     // Create an instance of the page corrector
-    val pageCorrector = new EmopPageCorrector(dictionaries, transformRules, contextChecker)
+    val pageCorrector = new EmopPageCorrector(dictionaries, transformRules, contextChecker, noiseCutoff)
 
     // Read the page hOCR XML
     val pageXml = pageCorrector.readXml(reader) match {
@@ -258,7 +266,7 @@ object Main extends App with Logging {
         "Illinois Informatics Institute, University of Illinois at Urbana-Champaign http://www.informatics.illinois.edu"
       ))
     }
-    val altoXml = AltoXml.create(pageXml, tokensMap, preProcessingSoftware, postProcessingSoftware)
+    val altoXml = AltoXml.create(pageXml, tokensMap, noiseCutoff, preProcessingSoftware, postProcessingSoftware)
 
     // Write the ALTO XML output to file
     val prettyPrinter = new scala.xml.PrettyPrinter(80, 2)
@@ -302,6 +310,12 @@ object Main extends App with Logging {
       }
     }
 
+    val unchangedAndIncorrect = unchangedTokens.filterNot {
+      case token =>
+        val cleanedText = token.text.replaceFirst("""^\p{P}""", "").replaceFirst("""\p{P}$""", "")
+        cleanedText.length >= 3 && token.isCorrect(cleanedText)
+    }
+
     if (dumpCorrectionDetails) {
       val outCorrectionsFile = new File(outputDir, s"${pageOcrName}_ALTO.txt.corrected")
       val outUnchangedFile = new File(outputDir, s"${pageOcrName}_ALTO.txt.unchanged")
@@ -313,7 +327,7 @@ object Main extends App with Logging {
       }
 
       managed(new FileWriter(outUnchangedFile)) acquireAndGet { unchangedFile =>
-        for (token <- unchangedTokens)
+        for (token <- unchangedAndIncorrect)
           unchangedFile.write(s"${token.text}\n")
       }
     }
@@ -321,10 +335,12 @@ object Main extends App with Logging {
     if (showCorrectionStats) {
       // Compute page correction statistics
       val totalTokenCount = tokens.size
-      val ignoredCount = tokens.count(!_.isCorrectable)
-      val correctCount = tokens.count(!_.isMisspelled) - ignoredCount
-      val correctedCount = correctedTokens.size
       val unchangedCount = unchangedTokens.size
+      val unchangedAndIncorrectCount = unchangedAndIncorrect.size
+      val unchangedButCorrectCount = unchangedCount - unchangedAndIncorrectCount
+      val ignoredCount = tokens.count(!_.isCorrectable)
+      val correctCount = tokens.count(!_.isMisspelled) - ignoredCount + unchangedButCorrectCount
+      val correctedCount = correctedTokens.size
 
       assert(totalTokenCount == ignoredCount + correctCount + correctedCount + unchangedCount,
         "Correction statistics sanity check failed")
@@ -334,7 +350,7 @@ object Main extends App with Logging {
           ("ignored" -> ignoredCount) ~
           ("correct" -> correctCount) ~
           ("corrected" -> correctedCount) ~
-          ("unchanged" -> unchangedCount)
+          ("unchanged" -> unchangedAndIncorrectCount)
 
       println(compactRender(jsonStats))
     }

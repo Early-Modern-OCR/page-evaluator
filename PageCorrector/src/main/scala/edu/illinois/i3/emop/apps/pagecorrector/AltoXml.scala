@@ -18,7 +18,7 @@ object AltoXml {
    * @param postProcessingSoftware The post-processing software to fill in the <postProcessingStep> metadata section
    * @return The ALTO XML element root
    */
-  def create(pageHocrXml: Document, correctedTokens: Map[String, HOCRToken],
+  def create(pageHocrXml: Document, correctedTokens: Map[String, HOCRToken], noiseCutoff: Float,
              preProcessingSoftware: Option[ProcessingSoftware],
              postProcessingSoftware: Option[ProcessingSoftware]) = {
 
@@ -166,7 +166,7 @@ object AltoXml {
                                       VPOS={ s"$wordTop" }
                                       CONTENT={ content }
                                       WC={ wordProps("x_wconf") }
-                                      emop:DNC="De-noising Confidence Value"/>
+                                      emop:DNC={ s"${token.noiseConf}" }/>
 
                           if (wordIsHyphenated)
                             altoStringNode = altoStringNode %

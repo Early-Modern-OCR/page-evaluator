@@ -34,7 +34,7 @@ object HOCRToken {
   }
 }
 
-abstract class HOCRToken(id: String, text: String) extends OCRToken(id, text) with SpellChecker with TextTransformer {
+abstract class HOCRToken(id: String, text: String, val noiseConf: Float) extends OCRToken(id, text) with SpellChecker with TextTransformer {
   import HOCRToken._
 
   /**

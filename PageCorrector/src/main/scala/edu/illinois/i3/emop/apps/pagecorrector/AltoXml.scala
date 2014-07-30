@@ -29,7 +29,7 @@ object AltoXml {
 
     val xpathFactory = XPathFactory.newInstance
     val xpath = xpathFactory.newXPath
-    val pageNode = xpath.evaluate("/html/body/div[@class='ocr_page']", pageHocrXml, XPathConstants.NODE).asInstanceOf[Element]
+    val pageNode = xpath.evaluate("//div[@class='ocr_page']", pageHocrXml, XPathConstants.NODE).asInstanceOf[Element]
     val pageProps = getProperties(pageNode.getAttribute("title"))
     val tesseractVersion = xpath.evaluate("/html/head/meta[@name='ocr-system']/@content", pageHocrXml, XPathConstants.STRING).toString
     val DimPattern = """(\d+) (\d+) (\d+) (\d+)""".r

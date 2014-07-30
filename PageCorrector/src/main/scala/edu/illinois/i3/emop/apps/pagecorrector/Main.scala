@@ -119,24 +119,6 @@ object Main extends App with Logging {
         default = Some(false)
     )
 
-    val preProcName = opt[String]("preProcName",
-        noshort = true,
-        descr = "The name of the software used in the pre-processing step",
-        default = None
-    )
-
-    val preProcVer = opt[String]("preProcVersion",
-        noshort = true,
-        descr = "The version of the software used in the pre-processing step",
-        default = None
-    )
-
-    val preProcVendor = opt[String]("preProcVendor",
-        noshort = true,
-        descr = "The name of the vendor of the software used in the pre-processing step",
-        default = None
-    )
-
     val noiseCutoff = opt[Float]("noiseCutoff",
         descr = "The noise probability cutoff value. " +
           "Tokens with noise probability higher than this value will be removed before correction. " +
@@ -163,16 +145,25 @@ object Main extends App with Logging {
   val outAltoTxtFile = new File(outputDir, s"${pageOcrName}_ALTO.txt")
 
   // Load the database configuration
-  val dbConf = new java.util.Properties()
-  managed(Source.fromFile(dbConfFile).bufferedReader()).acquireAndGet(dbConf.load)
+  val emopConf = new java.util.Properties()
+  managed(Source.fromFile(dbConfFile).bufferedReader()).acquireAndGet(emopConf.load)
 
   val dbUrl = {
-    val dbHost = dbConf.getProperty("db_host", "localhost")
-    val dbName = dbConf.getProperty("db_ngrams")
+    val dbHost = emopConf.getProperty("db_host", "localhost")
+    val dbName = emopConf.getProperty("db_ngrams")
     s"jdbc:mysql://$dbHost/$dbName"
   }
-  val dbUser = dbConf.getProperty("db_user")
-  val dbPasswd = dbConf.getProperty("db_pass")
+  val dbUser = emopConf.getProperty("db_user")
+  val dbPasswd = emopConf.getProperty("db_pass")
+  
+  val preProcName = emopConf.getProperty("preproc_soft_name")     // The name of the software used in the pre-processing step
+  val preProcVer = emopConf.getProperty("preproc_soft_ver")       // The version of the software used in the pre-processing step
+  val preProcVendor = emopConf.getProperty("preproc_soft_vendor") // The name of the vendor of the software used in the pre-processing step
+
+  val preProcessingSoftware = (preProcName, preProcVer, preProcVendor) match {
+    case (name, version, vendor) if name != null && version != null && vendor != null => Some(ProcessingSoftware(name, version, vendor))
+    case _ => None
+  }
 
   // Create the DB connection pool
   val connPool = {
@@ -254,10 +245,6 @@ object Main extends App with Logging {
     })
 
     // Create the ALTO XML representation of the corrected page
-    val preProcessingSoftware = (conf.preProcName.get, conf.preProcVer.get, conf.preProcVendor.get) match {
-      case (Some(name), Some(version), Some(vendor)) => Some(ProcessingSoftware(name, version, vendor))
-      case _ => None
-    }
     val postProcessingSoftware = (conf.appTitle, conf.appVersion, conf.appVendor) match {
       case (Some(name), Some(version), Some(vendor)) => Some(ProcessingSoftware(name, version, vendor))
       case _ => Some(ProcessingSoftware(
@@ -284,7 +271,7 @@ object Main extends App with Logging {
             var hypPos = hyphenatedToken.firstToken.text.length-1
             if (replacement.length < hypPos)
               hypPos = replacement.length
-            var hyphenText = "";
+            var hyphenText = ""
             try {
               hyphenText = replacement.take(hypPos) concat "-\n" concat replacement.substring(hypPos)
             }

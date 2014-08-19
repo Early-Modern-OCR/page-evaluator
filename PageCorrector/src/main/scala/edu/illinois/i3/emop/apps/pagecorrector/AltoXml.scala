@@ -18,7 +18,10 @@ object AltoXml {
    * @param postProcessingSoftware The post-processing software to fill in the <postProcessingStep> metadata section
    * @return The ALTO XML element root
    */
-  def create(pageHocrXml: Document, correctedTokens: Map[String, HOCRToken], noiseCutoff: Float,
+  def create(pageHocrXml: Document,
+             correctedTokens: Map[String, HOCRToken],
+             noiseCutoff: Float,
+             altCount: Int,
              preProcessingSoftware: Option[ProcessingSoftware],
              postProcessingSoftware: Option[ProcessingSoftware]) = {
 
@@ -181,9 +184,9 @@ object AltoXml {
                               mutable.LinkedHashSet(token.sortedContextMatches.map(_._1.toLowerCase): _*) ++
                                 token.replacements.drop(token.defaultReplacementsCount).map(_.toLowerCase)
 
-                            for (alt <- alternatives.map(preservePunctuationAndStyle(token.text, _))
+                            for (alt <- alternatives.map(preservePunctuationAndStyle(token, _))
                               .filterNot(txt => (txt equals content) || (txt equals token.text))
-                              .take(2)) { // only record max two correction alternatives
+                              .take(altCount)) { // only record max 'altCount' correction alternatives
                               altoStringNode = add(altoStringNode, <ALTERNATIVE>{ alt }</ALTERNATIVE>)
                             }
 

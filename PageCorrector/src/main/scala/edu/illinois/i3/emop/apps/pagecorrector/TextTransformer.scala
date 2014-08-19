@@ -85,13 +85,13 @@ trait TextTransformer {
    * @param maxTransformCount The maximum number of transformations allowed (puts an upper bound on processing time)
    * @return All possible transformations of the given text
    */
-  def transformations(text: String, maxTransformCount: Int = 19) =
+  def transformations(text: String, maxTransformCount: Int = 19) = {
     getPossibleTransformations(text)
       .take(maxTransformCount)
-      .powerSet
-      .withFilter(!hasOverlappedTransformations(_))
+      .powerSetWithFilter(!hasOverlappedTransformations(_))
       .map(adjustTransformationIndexes)
       .map(transform(text, _))
+  }
 
   /**
    * Finds all the longest (start,end) pairs of indices into the given text delimiting transformable text

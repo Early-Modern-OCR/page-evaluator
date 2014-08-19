@@ -125,6 +125,11 @@ object Main extends App with Logging {
           "Set to 0 to disable the removal of noisy tokens.",
         default = Some(0.5f)
     )
+
+    val altCount = opt[Int]("alt",
+        descr = "The number of alternatives to include in the ALTO output",
+        default = Some(2)
+    )
   }
 
   // Parse the command line args and extract values
@@ -138,6 +143,7 @@ object Main extends App with Logging {
   val showCorrectionStats = conf.showCorrectionStats()
   val dumpCorrectionDetails = conf.dumpCorrectionDetails()
   val noiseCutoff = conf.noiseCutoff()
+  val altCount = conf.altCount()
 
   // Define the output files
   val pageOcrName = pageOcrFile.getName.substring(0, pageOcrFile.getName.lastIndexOf('.'))
@@ -253,7 +259,7 @@ object Main extends App with Logging {
         "Illinois Informatics Institute, University of Illinois at Urbana-Champaign http://www.informatics.illinois.edu"
       ))
     }
-    val altoXml = AltoXml.create(pageXml, tokensMap, noiseCutoff, preProcessingSoftware, postProcessingSoftware)
+    val altoXml = AltoXml.create(pageXml, tokensMap, noiseCutoff, altCount, preProcessingSoftware, postProcessingSoftware)
 
     // Write the ALTO XML output to file
     val prettyPrinter = new scala.xml.PrettyPrinter(80, 2)
@@ -308,9 +314,13 @@ object Main extends App with Logging {
       val outUnchangedFile = new File(outputDir, s"${pageOcrName}_ALTO.txt.unchanged")
 
       managed(new FileWriter(outCorrectionsFile)) acquireAndGet { correctionsFile =>
-        correctionsFile.write("orig\tcorrected\n")
-        for (token <- correctedTokens)
-          correctionsFile.write(s"${token.text}\t${token.bestReplacement.get}\n")
+        correctionsFile.write("orig\tcorrected\tcontextMatch\truleSuggestion\n")
+        for (token <- correctedTokens) {
+          val replacement = token.bestUnformattedReplacement.get
+          val matchedOnContext = token.sortedContextMatches.exists(_._1 equals replacement)
+          val ruleGeneratedReplacement = token.correctTransformations.exists(_.text equals replacement)
+          correctionsFile.write(s"${token.text}\t${token.bestReplacement.get}\t$matchedOnContext\t$ruleGeneratedReplacement\n")
+        }
       }
 
       managed(new FileWriter(outUnchangedFile)) acquireAndGet { unchangedFile =>
@@ -329,7 +339,7 @@ object Main extends App with Logging {
       val correctCount = tokens.count(!_.isMisspelled) - ignoredCount + unchangedButCorrectCount
       val correctedCount = correctedTokens.size
 
-      assert(totalTokenCount == ignoredCount + correctCount + correctedCount + unchangedCount,
+      assert(totalTokenCount == ignoredCount + correctCount + correctedCount + unchangedAndIncorrectCount,
         "Correction statistics sanity check failed")
 
       val jsonStats =

@@ -1,6 +1,6 @@
 package edu.illinois.i3.emop.apps.pagecorrector
 
-import edu.illinois.i3.emop.apps.pagecorrector.TextTransformer.TransformedText
+import edu.illinois.i3.emop.apps.pagecorrector.TextTransformer.{Transformation, TransformedText}
 
 import scala.collection.mutable
 import edu.illinois.i3.scala.utils.collections._
@@ -8,7 +8,7 @@ import edu.illinois.i3.scala.utils.collections._
 object HOCRToken {
   import java.util.regex.Pattern
 
-  protected val CORRECTABLE_TOKEN_LEN_THRESHOLD = 3
+  protected val CORRECTABLE_TOKEN_LEN_THRESHOLD = 2
   protected val REPLACED_CHARS_THRESHOLD = 0.6
   protected val MAX_NONTRANSFORMABLE_CHARS_ALLOWED = 2
   protected val MAX_DICT_SUGGESTION_LEVENSHTEIN = 200
@@ -16,12 +16,33 @@ object HOCRToken {
 
   protected val AlphaPattern = Pattern.compile("\\p{L}", Pattern.CANON_EQ)
   protected val Repeated4orMoreCharsPattern = Pattern.compile("(\\P{N})\\1{3,}", Pattern.CANON_EQ)
+  protected val BeginPunctPattern = """^[^\p{L}\p{N}]*""".r
+  protected val EndPunctPattern = """[^\p{L}\p{N}]*$""".r
 
-  def preservePunctuationAndStyle(original: String, replacementCandidate: String) = {
+  def preservePunctuationAndStyle(token: HOCRToken, replacementCandidate: String) = {
+    val tokenText = token.text
     val replacementText = replacementCandidate.toLowerCase
-    val beginPunct =  original.takeWhile(!_.isLetterOrDigit)
-    val endPunct = original.reverse.takeWhile(!_.isLetterOrDigit).reverse
-    val cleanedToken = original.substring(beginPunct.length, original.length - endPunct.length)
+    val beginPunct = BeginPunctPattern.findFirstIn(tokenText).getOrElse("")
+    var endPunct = EndPunctPattern.findFirstIn(tokenText).getOrElse("")
+    if (endPunct.nonEmpty) {
+      // before adding back end punctuation (as requested), check whether some of it has been
+      // used in transforming the word based on the transformation rules, and if so ignore that
+      token.correctTransformations.find(_.text equalsIgnoreCase replacementCandidate) match {
+        case Some(TransformedText(_, original, trans)) if trans.nonEmpty =>
+          val origEndPunct = EndPunctPattern.findFirstIn(original).getOrElse("")
+          // get last index after which everything is considered punctuation
+          val lastStartPunctIdx = original.length - origEndPunct.length
+          // find the index in the original text that marks the point after which no more transformations were applied
+          val endTransIdx = trans.init.foldLeft(trans.last.index + trans.last.original.length)((adj, t) => adj + t.original.length - t.replacement.length)
+          // isolate the punctuation after 'lastStartPunctIdx' that was used in transformations (we don't want to add this back based on the "preserve end punctuation" policy)
+          val ignorePunct = if (lastStartPunctIdx < endTransIdx) original.substring(lastStartPunctIdx, endTransIdx) else ""
+          if (endPunct startsWith ignorePunct)
+            endPunct = endPunct.drop(ignorePunct.length)
+
+        case _ =>
+      }
+    }
+    val cleanedToken = tokenText.substring(beginPunct.length, tokenText.length - endPunct.length)
     val isAllUpper = (cleanedToken.count(_.isUpper).toFloat / cleanedToken.length) > 0.7f
     val isFirstUpper = cleanedToken.head.isUpper
     val replacement = (isAllUpper, isFirstUpper) match {
@@ -107,8 +128,15 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float) extends
     if (isMisspelled) {
       val transformCorrections = correctTransformations.map(_.text)
       var combined = defaultReplacements ++ transformCorrections
-      if (transformCorrections.size != 1) combined ++= dictSuggestions
-      combined
+      if (transformCorrections.size != 1 && correctableText.length > 3)
+        // only add dictionary suggestions if the token is 4 or more characters long
+        // for tokens less than 4 characters, rely only on the transformation candidates
+        combined ++= dictSuggestions
+
+      import edu.illinois.i3.scala.utils.implicits.StringsImplicits._
+
+      // drop all candidate replacements for which all characters change compared to the original
+      combined.filterNot(_.editDistance(correctableText) == correctableText.length)
     } else
       defaultReplacements
 
@@ -153,7 +181,21 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float) extends
 //      case _ => combineTransforms(spanTransforms)
 //    }
 
-    transforms.filter(t => t.text.length >= CORRECTABLE_TOKEN_LEN_THRESHOLD && isCorrect(t.text))
+    transforms
+      .map {
+        // remove punctuation at the beginning and end of a candidate transformation
+        // to allow tokens such as "t()()!" to be corrected to "too" (extra punctuation not used in transformation will
+        // be added back in the last step via the 'preservePunctuationAndStyle' method)
+        case tt @ TransformedText(txt, original, trans) =>
+          val beginPunctCount = BeginPunctPattern.findFirstIn(txt).getOrElse("").length
+          val endPunctCount  = EndPunctPattern.findFirstIn(txt).getOrElse("").length
+          if (beginPunctCount + endPunctCount > 0) {
+            val newTxt = txt.drop(beginPunctCount).dropRight(endPunctCount)
+            tt.copy(text = newTxt)
+          } else
+            tt
+      }
+      .filter(t => t.text.length >= CORRECTABLE_TOKEN_LEN_THRESHOLD && isCorrect(t.text))
   }
 
   /**
@@ -208,7 +250,8 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float) extends
     case _ => None
   }
 
-  def bestReplacement = bestUnformattedReplacement.map(preservePunctuationAndStyle(text, _)).filter(_ != text)
+  // only allow replacements with length > 1
+  def bestReplacement = bestUnformattedReplacement.filter(_.length > 1).map(preservePunctuationAndStyle(this, _)).filter(_ != text)
 
   override def toString = text
 }

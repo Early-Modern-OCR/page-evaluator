@@ -130,6 +130,11 @@ object Main extends App with Logging {
         descr = "The number of alternatives to include in the ALTO output",
         default = Some(2)
     )
+
+    val maxTransformCount = opt[Int]("max-transforms",
+        descr = "The maximum number of elements in the transformation 'pool' permitted per token (to seed the powerset)",
+        default = Some(19)
+    )
   }
 
   // Parse the command line args and extract values
@@ -144,6 +149,7 @@ object Main extends App with Logging {
   val dumpCorrectionDetails = conf.dumpCorrectionDetails()
   val noiseCutoff = conf.noiseCutoff()
   val altCount = conf.altCount()
+  val maxTransformCount = conf.maxTransformCount()
 
   // Define the output files
   val pageOcrName = pageOcrFile.getName.substring(0, pageOcrFile.getName.lastIndexOf('.'))
@@ -157,6 +163,8 @@ object Main extends App with Logging {
   val dbUrl = {
     val dbHost = emopConf.getProperty("db_host", "localhost")
     val dbName = emopConf.getProperty("db_ngrams")
+    if (dbName == null)
+      throw new RuntimeException(s"Configuration error - missing value for 'db_ngrams' in $dbConfFile")
     s"jdbc:mysql://$dbHost/$dbName"
   }
   val dbUser = emopConf.getProperty("db_user")
@@ -174,9 +182,9 @@ object Main extends App with Logging {
   // Create the DB connection pool
   val connPool = {
     val connPoolFactory = new BoneCPConnPool {
-      override val BONECP_MIN_CONN_PER_PART: Int = 2
-      override val BONECP_MAX_CONN_PER_PART: Int = 10
-      override val BONECP_PARTITION_COUNT: Int = 2
+      override val BONECP_MIN_CONN_PER_PART: Int = 1
+      override val BONECP_MAX_CONN_PER_PART: Int = 1
+      override val BONECP_PARTITION_COUNT: Int = 1
     }
     connPoolFactory.createConnectionPool("com.mysql.jdbc.Driver", dbUrl, dbUser, dbPasswd)
   }
@@ -189,7 +197,7 @@ object Main extends App with Logging {
 
   managed(Source.fromFile(pageOcrFile).bufferedReader()).acquireAndGet { reader =>
     // Create an instance of the page corrector
-    val pageCorrector = new EmopPageCorrector(dictionaries, transformRules, contextChecker, noiseCutoff)
+    val pageCorrector = new EmopPageCorrector(dictionaries, transformRules, contextChecker, noiseCutoff, maxTransformCount)
 
     // Read the page hOCR XML
     val pageXml = pageCorrector.readXml(reader) match {

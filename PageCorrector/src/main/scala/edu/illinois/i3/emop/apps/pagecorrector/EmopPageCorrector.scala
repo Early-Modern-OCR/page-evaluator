@@ -18,7 +18,8 @@ import scala.util.{Failure, Success}
 class EmopPageCorrector(val dictionaries: Iterable[SpellDictionary],
                         val transformRules: TextTransformer.TransformRules,
                         val contextChecker: NgramContextMatcher,
-                        val noiseCutoff: Float)
+                        val noiseCutoff: Float,
+                        val maxTransformCount: Int)
   extends HOCRPageParser with LineCleaner with UTF8Normalizer with HyphenatedTokenJoiner with Logging {
   corrector =>
 
@@ -33,14 +34,14 @@ class EmopPageCorrector(val dictionaries: Iterable[SpellDictionary],
       case value => value.toFloat
     }
     val text = normalizeUTF8(xmlWord.getTextContent)
-    new HOCRToken(id, text, noiseConf) {
+    new HOCRToken(id, text, noiseConf, maxTransformCount) {
       override val dictionaries = corrector.dictionaries
       override val transformRules = corrector.transformRules
     }
   }
 
   protected override def createHyphenatedToken(firstToken: TokenType, secondToken: TokenType) =
-    new HyphenatedToken(firstToken, secondToken) {
+    new HyphenatedToken(firstToken, secondToken, maxTransformCount) {
       override val dictionaries = corrector.dictionaries
       override val transformRules = corrector.transformRules
     }

@@ -55,7 +55,7 @@ object HOCRToken {
   }
 }
 
-abstract class HOCRToken(id: String, text: String, val noiseConf: Float) extends OCRToken(id, text) with SpellChecker with TextTransformer {
+abstract class HOCRToken(id: String, text: String, val noiseConf: Float, val maxTransformCount: Int) extends OCRToken(id, text) with SpellChecker with TextTransformer {
   import HOCRToken._
 
   /**
@@ -158,14 +158,14 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float) extends
       )
 
     val transforms = interSpanChars match {
-      case spanChars if spanChars.isEmpty || spanChars.forall(_ equals "-") => transformations(correctableText)
+      case spanChars if spanChars.isEmpty || spanChars.forall(_ equals "-") => transformations(correctableText, maxTransformCount)
       case _ ::> last if last == "'" && bestCorrectablePart.last._2 - bestCorrectablePart.last._1 < 4 =>
         join(
-          transformations(spanToText(bestCorrectablePart.init)),
-          transformations(spanToText(List(bestCorrectablePart.last))),
+          transformations(spanToText(bestCorrectablePart.init), maxTransformCount),
+          transformations(spanToText(List(bestCorrectablePart.last)), maxTransformCount),
           "'"
         )
-      case _ => transformations(spanToText(bestCorrectablePart))
+      case _ => transformations(spanToText(bestCorrectablePart), maxTransformCount)
     }
 
 //    val spanTransforms = bestCorrectablePart.map(span => text.substring(span._1, span._2)).map(transformations(_))

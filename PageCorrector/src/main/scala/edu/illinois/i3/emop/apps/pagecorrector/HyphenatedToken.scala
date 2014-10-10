@@ -1,8 +1,9 @@
 package edu.illinois.i3.emop.apps.pagecorrector
 
-abstract class HyphenatedToken(val firstToken: HOCRToken, val secondToken: HOCRToken)
+abstract class HyphenatedToken(val firstToken: HOCRToken, val secondToken: HOCRToken, override val maxTransformCount: Int)
   extends HOCRToken(
     s"${firstToken.id}::${secondToken.id}",
     firstToken.text.init concat secondToken.text,
-    Math.max(firstToken.noiseConf, secondToken.noiseConf)
+    Math.max(firstToken.noiseConf, secondToken.noiseConf),
+    maxTransformCount
   )

@@ -88,39 +88,48 @@ object AltoXml {
             yield {
               val parXml = parNode.asInstanceOf[Element]
               val parProps = getProperties(parXml.getAttribute("title"))
-              val (parTop, parLeft, parBottom, parRight) = parProps("bbox") match {
-                case DimPattern(t, l, b, r) => (t.toInt, l.toInt, b.toInt, r.toInt)
+              val (parLeft, parTop, parRight, parBottom) = parProps("bbox") match {
+                case DimPattern(l, t, r, b) => (l.toInt, t.toInt, r.toInt, b.toInt)
                 case _ => (0, 0, 0, 0)
               }
+              val lineNodes = xpath.evaluate("span[@class='ocr_line']",
+                parNode, XPathConstants.NODESET).asInstanceOf[NodeList]
+              if (lineNodes.isEmpty)
+                NodeSeq.Empty
+              else
               <TextBlock ID={ parXml.getAttribute("id") }
                          WIDTH={ s"${parRight-parLeft}" }
                          HEIGHT={ s"${parBottom-parTop}" }
                          HPOS={ s"$parLeft" }
                          VPOS={ s"$parTop" }>{
-                for (lineNode <- xpath.evaluate("span[@class='ocr_line']",
-                  parNode, XPathConstants.NODESET).asInstanceOf[NodeList])
+                for (lineNode <- lineNodes)
                 yield {
                   val lineXml = lineNode.asInstanceOf[Element]
                   val lineProps = getProperties(lineXml.getAttribute("title"))
-                  val (lineTop, lineLeft, lineBottom, lineRight) = lineProps("bbox") match {
-                    case DimPattern(t, l, b, r) => (t.toInt, l.toInt, b.toInt, r.toInt)
+                  val (lineLeft, lineTop, lineRight, lineBottom) = lineProps("bbox") match {
+                    case DimPattern(l, t, r, b) => (l.toInt, t.toInt, r.toInt, b.toInt)
                     case _ => (0, 0, 0, 0)
                   }
+                  val wordNodes = xpath.evaluate("span[@class='ocrx_word']",
+                    lineNode, XPathConstants.NODESET).asInstanceOf[NodeList].toIterator.filter(
+                      w => correctedTokens.contains(w.asInstanceOf[Element].getAttribute("id")))
+                  if (wordNodes.isEmpty)
+                    NodeSeq.Empty
+                  else
                   <TextLine ID={ lineXml.getAttribute("id") }
                             WIDTH={ s"${lineRight-lineLeft}" }
                             HEIGHT={ s"${lineBottom-lineTop}" }
-                            HPOS={ s"$lineLeft" }
-                            VPOS={ s"$lineTop" }>{
+                            HPOS={ s"$lineTop" }
+                            VPOS={ s"$lineLeft" }>{
                     var firstOnLine = true
-                    val wordNodes = xpath.evaluate("span[@class='ocrx_word']",
-                      lineNode, XPathConstants.NODESET).asInstanceOf[NodeList].toIterator
+
                     for (wordNode <- wordNodes)
                     yield {
                       val wordXml = wordNode.asInstanceOf[Element]
                       val wordId = wordXml.getAttribute("id")
                       val wordProps = getProperties(wordXml.getAttribute("title"))
-                      val (wordTop, wordLeft, wordBottom, wordRight) = wordProps("bbox") match {
-                        case DimPattern(t, l, b, r) => (t.toInt, l.toInt, b.toInt, r.toInt)
+                      val (wordLeft, wordTop, wordRight, wordBottom) = wordProps("bbox") match {
+                        case DimPattern(l, t, r, b) => (l.toInt, t.toInt, r.toInt, b.toInt)
                         case _ => (0, 0, 0, 0)
                       }
 
@@ -165,8 +174,8 @@ object AltoXml {
                               <String ID={wordId}
                                       WIDTH={ s"${wordRight - wordLeft}" }
                                       HEIGHT={ s"${wordBottom - wordTop}" }
-                                      HPOS={ s"$wordLeft" }
-                                      VPOS={ s"$wordTop" }
+                                      HPOS={ s"$wordTop" }
+                                      VPOS={ s"$wordLeft" }
                                       CONTENT={ content }
                                       WC={ wordProps("x_wconf") }
                                       emop:DNC={ s"${token.noiseConf}" }/>

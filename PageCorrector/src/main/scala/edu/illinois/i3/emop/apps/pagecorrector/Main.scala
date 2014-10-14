@@ -135,6 +135,16 @@ object Main extends App with Logging {
         descr = "The maximum number of elements in the transformation 'pool' permitted per token (to seed the powerset)",
         default = Some(20)
     )
+
+    val minContextMatchCount = opt[Int]("ctx-min-match",
+        descr = "If specified, this value requires that context matches have at least this much 'matchCount' support " +
+          "in the context database before the match is considered valid"
+    )
+
+    val minContextVolCount = opt[Int]("ctx-min-vol",
+        descr = "If specified, this value requires that context matches have at least this much 'volCount' support " +
+          "in the context database before the match is considered valid"
+    )
   }
 
   // Parse the command line args and extract values
@@ -150,6 +160,8 @@ object Main extends App with Logging {
   val noiseCutoff = conf.noiseCutoff()
   val altCount = conf.altCount()
   val maxTransformCount = conf.maxTransformCount()
+  val minContextMatchCount = conf.minContextMatchCount.get
+  val minContextVolCount = conf.minContextVolCount.get
 
   // Define the output files
   val pageOcrName = pageOcrFile.getName.substring(0, pageOcrFile.getName.lastIndexOf('.'))
@@ -191,7 +203,7 @@ object Main extends App with Logging {
 
   // Use the connection pool to create the ngram context checker
   val contextChecker = connPool match {
-    case Success(pool) => new NgramContextMatcher(pool)
+    case Success(pool) => new NgramContextMatcher(pool, minContextMatchCount, minContextVolCount)
     case Failure(e) => throw new RuntimeException(s"Error creating database connection pool", e)
   }
 

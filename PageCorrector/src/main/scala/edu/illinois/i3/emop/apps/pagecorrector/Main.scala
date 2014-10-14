@@ -133,7 +133,7 @@ object Main extends App with Logging {
 
     val maxTransformCount = opt[Int]("max-transforms",
         descr = "The maximum number of elements in the transformation 'pool' permitted per token (to seed the powerset)",
-        default = Some(19)
+        default = Some(20)
     )
   }
 

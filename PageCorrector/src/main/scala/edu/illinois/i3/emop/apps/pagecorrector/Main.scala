@@ -13,139 +13,9 @@ import TextTransformer._
 import edu.illinois.i3.emop.apps.pagecorrector.utils.BoneCPConnPool
 import scala.collection.mutable
 
-
+// NOTE: If encountering "GC overhead limit exceeded" error, try using -XX:-UseGCOverheadLimit in the JVM_ARGS
 object Main extends App with Logging {
   implicit val codec = Codec.UTF8
-
-  /**
-   * Command line argument parser
-   *
-   * @param arguments The cmd line arguments
-   */
-  class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
-    object ValueConverters {
-      private def getFilenameWithoutExtension(filePath: String) = {
-        var idx = filePath.lastIndexOf(File.separator)
-        val fname = if (idx != -1) filePath.substring(idx + 1) else filePath
-        idx = fname.lastIndexOf(".")
-        if (idx != -1) fname.substring(0, idx) else fname
-      }
-
-      implicit val dictionaryListConverter: ValueConverter[List[SpellDictionary]] =
-        listArgConverter[Try[SpellDictionary]](f =>
-          Try {
-            val dictName = getFilenameWithoutExtension(f)
-            managed(Source.fromFile(f).reader()).acquireAndGet {
-              dictReader => new SpellDictionaryHashMap(dictName, dictReader)
-            }
-          }
-        ).flatMap { d =>
-          Try(d.map(_.get)) match {
-            case Success(dicts) => Right(Some(dicts))
-            case Failure(t) => Left(t.getMessage)
-          }
-        }
-
-      implicit val transformRulesConverter: ValueConverter[TransformRules] =
-        singleArgConverter[Try[TransformRules]](f =>
-          Try {
-            val rulesJson = managed(Source.fromFile(f)).acquireAndGet(_.mkString)
-            val transformList: List[(String, String)] = for {
-              JField(correct, transforms) <- parseJson(rulesJson)
-              JString(transform) <- transforms
-            } yield transform -> correct
-            val rulesMap = transformList.groupBy(_._1).map { case (k, v) => (k, v.map(_._2).toSet) }
-            rulesMap
-          }
-        ).flatMap {
-          case Success(rules) => Right(Some(rules))
-          case Failure(t) => Left(t.getMessage)
-        }
-    }
-
-    import ValueConverters._
-
-    val (appTitle, appVersion, appVendor) = {
-      val p = getClass.getPackage
-      val nameOpt = Option(p.getImplementationTitle)
-      val versionOpt = Option(p.getImplementationVersion)
-      val vendorOpt = Option(p.getImplementationVendor)
-      (nameOpt, versionOpt, vendorOpt)
-    }
-
-    version(appTitle.flatMap(
-      name => appVersion.flatMap(
-        version => appVendor.map(
-          vendor => s"$name $version\n$vendor"))).getOrElse("PageCorrector"))
-
-    // Database connection parameters
-    val dbConfFile = opt[File]("dbconf",
-      noshort = true,
-      descr = "Database configuration properties file",
-      required = true)
-
-    // Transformation rules
-    val transformRules = opt[TransformRules]("transform",
-        descr = "The transformation rules file",
-        required = true)
-
-    // Dictionaries
-    val dictionaries = opt[List[SpellDictionary]]("dict",
-        descr = "Specifies one or more dictionaries to use",
-        required = true)
-
-    // Page OCR file parameter
-    val pageOcrFile = trailArg[File]("page-ocr",
-        descr = "The page OCR file",
-        required = true)
-
-    // Output directory
-    val outputDir = opt[String]("outputDir",
-        descr = "The directory where the results should be written to",
-        required = true)
-
-    val saveTransformationStats = opt[Boolean]("save",
-        descr = "Save stats about which transformation rules were applied",
-        default = Some(false)
-    )
-
-    val dumpCorrectionDetails = opt[Boolean]("dump",
-        descr = "Dump details of the corrections made and corrections missed to individual files",
-        default = Some(false)
-    )
-
-    val showCorrectionStats = opt[Boolean]("stats",
-        descr = "Print correction statistics in JSON format, at the end",
-        default = Some(false)
-    )
-
-    val noiseCutoff = opt[Float]("noiseCutoff",
-        descr = "The noise probability cutoff value. " +
-          "Tokens with noise probability higher than this value will be removed before correction. " +
-          "Set to 0 to disable the removal of noisy tokens.",
-        default = Some(0.5f)
-    )
-
-    val altCount = opt[Int]("alt",
-        descr = "The number of alternatives to include in the ALTO output",
-        default = Some(2)
-    )
-
-    val maxTransformCount = opt[Int]("max-transforms",
-        descr = "The maximum number of elements in the transformation 'pool' permitted per token (to seed the powerset)",
-        default = Some(20)
-    )
-
-    val minContextMatchCount = opt[Int]("ctx-min-match",
-        descr = "If specified, this value requires that context matches have at least this much 'matchCount' support " +
-          "in the context database before the match is considered valid"
-    )
-
-    val minContextVolCount = opt[Int]("ctx-min-vol",
-        descr = "If specified, this value requires that context matches have at least this much 'volCount' support " +
-          "in the context database before the match is considered valid"
-    )
-  }
 
   // Parse the command line args and extract values
   val conf = new Conf(args)
@@ -372,4 +242,134 @@ object Main extends App with Logging {
       println(compactRender(jsonStats))
     }
   }
+}
+
+/**
+ * Configuration for the command line argument parser
+ *
+ * @param arguments The cmd line arguments
+ */
+class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
+  object ValueConverters {
+    private def getFilenameWithoutExtension(filePath: String) = {
+      var idx = filePath.lastIndexOf(File.separator)
+      val fname = if (idx != -1) filePath.substring(idx + 1) else filePath
+      idx = fname.lastIndexOf(".")
+      if (idx != -1) fname.substring(0, idx) else fname
+    }
+
+    implicit val dictionaryListConverter: ValueConverter[List[SpellDictionary]] =
+      listArgConverter[Try[SpellDictionary]](f =>
+        Try {
+          val dictName = getFilenameWithoutExtension(f)
+          managed(Source.fromFile(f).reader()).acquireAndGet {
+            dictReader => new SpellDictionaryHashMap(dictName, dictReader)
+          }
+        }
+      ).flatMap { d =>
+        Try(d.map(_.get)) match {
+          case Success(dicts) => Right(Some(dicts))
+          case Failure(t) => Left(t.getMessage)
+        }
+      }
+
+    implicit val transformRulesConverter: ValueConverter[TransformRules] =
+      singleArgConverter[Try[TransformRules]](f =>
+        Try {
+          val rulesJson = managed(Source.fromFile(f)).acquireAndGet(_.mkString)
+          val transformList: List[(String, String)] = for {
+            JField(correct, transforms) <- parseJson(rulesJson)
+            JString(transform) <- transforms
+          } yield transform -> correct
+          val rulesMap = transformList.groupBy(_._1).map { case (k, v) => (k, v.map(_._2).toSet) }
+          rulesMap
+        }
+      ).flatMap {
+        case Success(rules) => Right(Some(rules))
+        case Failure(t) => Left(t.getMessage)
+      }
+  }
+
+  import ValueConverters._
+
+  val (appTitle, appVersion, appVendor) = {
+    val p = getClass.getPackage
+    val nameOpt = Option(p.getImplementationTitle)
+    val versionOpt = Option(p.getImplementationVersion)
+    val vendorOpt = Option(p.getImplementationVendor)
+    (nameOpt, versionOpt, vendorOpt)
+  }
+
+  version(appTitle.flatMap(
+    name => appVersion.flatMap(
+      version => appVendor.map(
+        vendor => s"$name $version\n$vendor"))).getOrElse("PageCorrector"))
+
+  // Database connection parameters
+  val dbConfFile = opt[File]("dbconf",
+    noshort = true,
+    descr = "Database configuration properties file",
+    required = true)
+
+  // Transformation rules
+  val transformRules = opt[TransformRules]("transform",
+    descr = "The transformation rules file",
+    required = true)
+
+  // Dictionaries
+  val dictionaries = opt[List[SpellDictionary]]("dict",
+    descr = "Specifies one or more dictionaries to use",
+    required = true)
+
+  // Page OCR file parameter
+  val pageOcrFile = trailArg[File]("page-ocr",
+    descr = "The page OCR file",
+    required = true)
+
+  // Output directory
+  val outputDir = opt[String]("outputDir",
+    descr = "The directory where the results should be written to",
+    required = true)
+
+  val saveTransformationStats = opt[Boolean]("save",
+    descr = "Save stats about which transformation rules were applied",
+    default = Some(false)
+  )
+
+  val dumpCorrectionDetails = opt[Boolean]("dump",
+    descr = "Dump details of the corrections made and corrections missed to individual files",
+    default = Some(false)
+  )
+
+  val showCorrectionStats = opt[Boolean]("stats",
+    descr = "Print correction statistics in JSON format, at the end",
+    default = Some(false)
+  )
+
+  val noiseCutoff = opt[Float]("noiseCutoff",
+    descr = "The noise probability cutoff value. " +
+      "Tokens with noise probability higher than this value will be removed before correction. " +
+      "Set to 0 to disable the removal of noisy tokens.",
+    default = Some(0.5f)
+  )
+
+  val altCount = opt[Int]("alt",
+    descr = "The number of alternatives to include in the ALTO output",
+    default = Some(2)
+  )
+
+  val maxTransformCount = opt[Int]("max-transforms",
+    descr = "The maximum number of elements in the transformation 'pool' permitted per token (to seed the powerset)",
+    default = Some(20)
+  )
+
+  val minContextMatchCount = opt[Int]("ctx-min-match",
+    descr = "If specified, this value requires that context matches have at least this much 'matchCount' support " +
+      "in the context database before the match is considered valid"
+  )
+
+  val minContextVolCount = opt[Int]("ctx-min-vol",
+    descr = "If specified, this value requires that context matches have at least this much 'volCount' support " +
+      "in the context database before the match is considered valid"
+  )
 }

@@ -1,5 +1,6 @@
 package edu.illinois.i3.emop.apps.pagecorrector
 
+import com.jolbox.bonecp.UsernamePassword
 import org.rogach.scallop.{ValueConverter, ScallopConf, singleArgConverter, listArgConverter}
 import com.typesafe.scalalogging.slf4j.Logging
 import edu.illinois.i3.spellcheck.engine.{SpellDictionaryHashMap, SpellDictionary}
@@ -42,16 +43,13 @@ object Main extends App with Logging {
   val emopConf = new java.util.Properties()
   managed(Source.fromFile(dbConfFile).bufferedReader()).acquireAndGet(emopConf.load)
 
-  val dbUrl = {
-    val dbHost = emopConf.getProperty("db_host", "localhost")
-    val dbName = emopConf.getProperty("db_ngrams")
-    if (dbName == null)
-      throw new RuntimeException(s"Configuration error - missing value for 'db_ngrams' in $dbConfFile")
-    s"jdbc:mysql://$dbHost/$dbName"
+  val dbUrl = emopConf.getProperty("ctx_db_url")
+  val dbDriver = emopConf.getProperty("ctx_db_driver")
+  val dbCreds = (emopConf.getProperty("ctx_db_user"), emopConf.getProperty("ctx_db_pass")) match {
+    case (username, password) if username != null => Some(new UsernamePassword(username, password))
+    case _ => None
   }
-  val dbUser = emopConf.getProperty("db_user")
-  val dbPasswd = emopConf.getProperty("db_pass")
-  
+
   val preProcName = emopConf.getProperty("preproc_soft_name")     // The name of the software used in the pre-processing step
   val preProcVer = emopConf.getProperty("preproc_soft_ver")       // The version of the software used in the pre-processing step
   val preProcVendor = emopConf.getProperty("preproc_soft_vendor") // The name of the vendor of the software used in the pre-processing step
@@ -68,7 +66,7 @@ object Main extends App with Logging {
       override val BONECP_MAX_CONN_PER_PART: Int = 1
       override val BONECP_PARTITION_COUNT: Int = 1
     }
-    connPoolFactory.createConnectionPool("com.mysql.jdbc.Driver", dbUrl, dbUser, dbPasswd)
+    connPoolFactory.createConnectionPool(dbDriver, dbUrl, dbCreds)
   }
 
   // Use the connection pool to create the ngram context checker

@@ -118,16 +118,20 @@ public class OCRPageStats {
     }
 
     public float getCorrectableScore() {
-        return (float)
+        Float score = (float)
                 // number of tokens matching the "correctable profile"
                 (_cleanAllAlphaNoRepTokenCount + _cleanOneNonAlphaNoRepTokenCount + _cleanTwoNonAlphaNoRepTokenCount)
                 // divided by
                 /
                 // max number of potentially correctable tokens
                 (_tokenCount - getIgnoredTokenCount() - _cleanShortWordCount);
+
+        return score.isNaN() ? -1f : score;
     }
 
     public float getQualityScore() {
-        return (float)(_cleanAllAlphaNoRepTokenCount + _cleanOneNonAlphaNoRepTokenCount + _cleanTwoNonAlphaNoRepTokenCount) / _tokenCount;
+        Float score = (float) (_cleanAllAlphaNoRepTokenCount + _cleanOneNonAlphaNoRepTokenCount + _cleanTwoNonAlphaNoRepTokenCount) / _tokenCount;
+
+        return score.isNaN() ? -1f : score;
     }
 }

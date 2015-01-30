@@ -3,13 +3,16 @@ package edu.illinois.i3.emop.apps.pagecorrector
 import edu.illinois.i3.emop.apps.pagecorrector.PageParser._
 import scala.annotation.tailrec
 
+/**
+ * Trait for joining hyphenated tokens
+ */
 trait HyphenatedTokenJoiner {
   type TokenType <: Token
   type HyphenatedTokenType <: TokenType
 
   protected def createHyphenatedToken(firstToken: TokenType, secondToken: TokenType): HyphenatedTokenType
 
-  def joinHyphenatedTokens(lines: Seq[Line[TokenType]]) = {
+  def joinHyphenatedTokens(lines: Seq[Line[TokenType]]): Seq[Line[TokenType]] = {
     @tailrec
     def join(acc: Seq[Line[TokenType]], lines: Seq[Line[TokenType]]): Seq[Line[TokenType]] = lines match {
       case l1 :: l2 :: xs if l1.nonEmpty && l2.nonEmpty && l1.last.text.endsWith("-") =>

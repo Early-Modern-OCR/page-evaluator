@@ -8,7 +8,7 @@ object TextTransformer {
     def overlaps(other: Transformation) = index < other.extent && other.index < extent
   }
 
-  case class TransformedText(text: String, original: String, transformations: Seq[Transformation])
+  case class TransformedText(text: String, original: String, transformations: Iterable[Transformation])
 }
 
 trait TextTransformer {
@@ -37,7 +37,7 @@ trait TextTransformer {
    * @param transforms The set of transformations to check
    * @return True if there is overlap in the transformations (e.g. they cannot be applied together), False otherwise
    */
-  protected def hasOverlappedTransformations(transforms: Seq[Transformation]) =
+  protected def hasOverlappedTransformations(transforms: Iterable[Transformation]) =
     transforms.sliding(2).exists {
       case Seq(t1, t2) => t2 overlaps t1
       case _ => false
@@ -51,7 +51,7 @@ trait TextTransformer {
    * @param transforms The group of transformations
    * @return The index-adjusted group of transformations
    */
-  protected def adjustTransformationIndexes(transforms: Seq[Transformation]) = {
+  protected def adjustTransformationIndexes(transforms: Iterable[Transformation]) = {
     var adjust = 0
     transforms.map {
       case t @ Transformation(original, replacement, index) =>
@@ -68,7 +68,7 @@ trait TextTransformer {
    * @param transforms The group of (index-adjusted) transformations to apply
    * @return The transformed text
    */
-  protected def transform(text: String, transforms: Seq[Transformation]) =
+  protected def transform(text: String, transforms: Iterable[Transformation]) =
     TransformedText(
       transforms.foldLeft(text) {
         case (s, Transformation(original, replacement, index)) =>
@@ -88,7 +88,7 @@ trait TextTransformer {
   def transformations(text: String, maxTransformCount: Int = 19) = {
     getPossibleTransformations(text)
       .take(maxTransformCount)
-      .powerSetWithFilter(!hasOverlappedTransformations(_))
+      .powerSetWithExclusiveFilter(!hasOverlappedTransformations(_))
       .map(adjustTransformationIndexes)
       .map(transform(text, _))
   }
@@ -101,7 +101,7 @@ trait TextTransformer {
    * @return The longest (start,end) pairs of indices into the given text delimiting transformable text
    */
   def findTransformableParts(text: String, nonTransformableCharTolerance: Int = 0) = {
-    val ruleCover = transformRules.keys.withFilter(text.contains(_)).flatMap(err =>
+    val ruleCover = transformRules.keys.withFilter(text.contains).flatMap(err =>
       (0 until text.length).collect { case i if text.substring(i).startsWith(err) => (i, i+err.length) })
     val charCover = text.zipWithIndex.collect { case (c, i) if c.isLetter => (i, i+1) }
     val cover = Set(charCover ++ ruleCover: _*)

@@ -1,8 +1,8 @@
 package edu.illinois.i3.emop.apps.pagecorrector
 
+import com.typesafe.scalalogging.LazyLogging
 import org.w3c.dom.{Element,Document}
 
-import com.typesafe.scalalogging.slf4j.Logging
 import edu.illinois.i3.spellcheck.engine.SpellDictionary
 
 import scala.collection.mutable
@@ -20,41 +20,66 @@ class EmopPageCorrector(val dictionaries: Iterable[SpellDictionary],
                         val contextChecker: NgramContextMatcher,
                         val noiseCutoff: Float,
                         val maxTransformCount: Int)
-  extends HOCRPageParser with LineCleaner with UTF8Normalizer with HyphenatedTokenJoiner with Logging {
+  extends HOCRPageParser with LineCleaner with UTF8Normalizer with HyphenatedTokenJoiner with LazyLogging {
   corrector =>
 
   override type TokenType = HOCRToken
   override type HyphenatedTokenType = HyphenatedToken
 
-  protected override def createToken(xmlWord: Element) = {
+  /**
+   * Factory method for creating hOCR tokens
+   *
+   * @param xmlWord The xml token
+   * @return The hOCR token
+   */
+  protected override def createToken(xmlWord: Element): HOCRToken = {
     val id = xmlWord.getAttribute("id")
     val props = getProperties(xmlWord.getAttribute("title"))
     val noiseConf = props.getOrElse("noiseConf", "0") match {
       case "NaN" => 0f
       case value => value.toFloat
     }
+
     val text = normalizeUTF8(xmlWord.getTextContent)
+
     new HOCRToken(id, text, noiseConf, maxTransformCount) {
       override val dictionaries = corrector.dictionaries
       override val transformRules = corrector.transformRules
     }
   }
 
-  protected override def createHyphenatedToken(firstToken: TokenType, secondToken: TokenType) =
+  protected override def createHyphenatedToken(firstToken: TokenType, secondToken: TokenType): HyphenatedToken =
     new HyphenatedToken(firstToken, secondToken, maxTransformCount) {
       override val dictionaries = corrector.dictionaries
       override val transformRules = corrector.transformRules
     }
 
   override def getLines(document: Document) =
-    joinHyphenatedTokens(cleanLines(super.getLines(document).map(_.filter(_.noiseConf < noiseCutoff || noiseCutoff == 0))))
+    joinHyphenatedTokens(cleanLines(super.getLines(document).map(line => line.filter(token => token.noiseConf < noiseCutoff || noiseCutoff == 0))))
 
+  /**
+   * Checks whether this 3-gram window should be considered for context-matching.
+   * For example, we want to return 'false' for 3-gram windows that do not contain any misspelled words,
+   * since there's no point in doing context-checking if everything is spelled correctly in this window.
+   *
+   * @param window The window
+   * @return True if this window should be considered for context-matching, False otherwise
+   */
+  protected def isCandidateForContextMatching(window: Seq[HOCRToken]): Boolean =
+    window.exists(token => token.isMisspelled)
+
+  /**
+   * Performs the correction of the given tokens based on the transformation rules, context matching, and
+   * heuristic rules put in place in the algorithm
+   *
+   * @param tokens The tokens to correct
+   */
   def correctTokens(tokens: Seq[HOCRToken]) {
     // keep a cache of already calculated candidate replacements (not absolutely necessary to do this, but...)
     val replacementCache = mutable.HashMap.empty[String, Iterable[String]]
 
     // use a sliding window of 3 tokens (3-grams) to find windows containing misspelled tokens that need to be corrected
-    tokens.sliding(3).withFilter(_.exists(_.isMisspelled)).foreach {
+    tokens.sliding(3).withFilter(isCandidateForContextMatching).foreach {
       case window @ Seq(token1, token2, token3) =>
         logger.debug("window: {} {} {}", token1, token2, token3)
 

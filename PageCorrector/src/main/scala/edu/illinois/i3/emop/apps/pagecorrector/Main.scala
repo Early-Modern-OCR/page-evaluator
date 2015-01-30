@@ -1,8 +1,8 @@
 package edu.illinois.i3.emop.apps.pagecorrector
 
 import com.jolbox.bonecp.UsernamePassword
+import com.typesafe.scalalogging.LazyLogging
 import org.rogach.scallop.{ValueConverter, ScallopConf, singleArgConverter, listArgConverter}
-import com.typesafe.scalalogging.slf4j.Logging
 import edu.illinois.i3.spellcheck.engine.{SpellDictionaryHashMap, SpellDictionary}
 import java.io.{FileWriter, PrintWriter, File}
 import scala.io.{Codec, Source}
@@ -15,7 +15,7 @@ import edu.illinois.i3.emop.apps.pagecorrector.utils.BoneCPConnPool
 import scala.collection.mutable
 
 // NOTE: If encountering "GC overhead limit exceeded" error, try using -XX:-UseGCOverheadLimit in the JVM_ARGS
-object Main extends App with Logging {
+object Main extends App with LazyLogging {
   implicit val codec = Codec.UTF8
 
   // Parse the command line args and extract values
@@ -111,7 +111,7 @@ object Main extends App with Logging {
         token.correctTransformations.find(_.text equalsIgnoreCase replacement) match {
           case Some(TransformedText(_, _, transformations)) =>
             val transformCounts = transformations.map(t => t.original -> t.replacement).groupBy(t => t).map {
-              case (k, v) => k -> v.length
+              case (k, v) => k -> v.size
             }
             for ((transform, count) <- transformCounts)
               transformStats(transform) = transformStats.getOrElse(transform, 0) + 1

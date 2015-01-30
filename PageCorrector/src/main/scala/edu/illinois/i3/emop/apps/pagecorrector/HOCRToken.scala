@@ -8,7 +8,8 @@ import edu.illinois.i3.scala.utils.collections._
 object HOCRToken {
   import java.util.regex.Pattern
 
-  protected val CORRECTABLE_TOKEN_LEN_THRESHOLD = 2
+  protected val CORRECTABLE_TOKEN_MIN_LEN = 2
+  protected val CORRECTABLE_TOKEN_MAX_LEN = 18
   protected val REPLACED_CHARS_THRESHOLD = 0.6
   protected val MAX_NONTRANSFORMABLE_CHARS_ALLOWED = 2
   protected val MAX_DICT_SUGGESTION_LEVENSHTEIN = 200
@@ -61,10 +62,12 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float, val max
   /**
    * Finds the longest contiguous substrings (start,end)-pairs of the original token text that can
    * potentially be corrected (taking into account the provided transformations)
+   *
+   * TODO: ideally, each of the groupings should become a token to correct
    */
-  protected lazy val correctableParts = findTransformableParts(text, MAX_NONTRANSFORMABLE_CHARS_ALLOWED)
+   protected lazy val correctableParts = findTransformableParts(text, MAX_NONTRANSFORMABLE_CHARS_ALLOWED)
 
-  protected lazy val bestCorrectablePart = {
+   protected lazy val bestCorrectablePart = {
     implicit val ordering = new Ordering[List[(Int,Int)]] {
       override def compare(x: List[(Int, Int)], y: List[(Int, Int)]) = {
         val s1 = text.substring(x.head._1, x.last._2)
@@ -78,10 +81,12 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float, val max
       }
     }
 
-    correctableParts match {
+    val bestPart = correctableParts match {
       case Nil => List.empty[(Int,Int)]
       case _ => correctableParts.max
     }
+
+    bestPart
   }
 
   lazy val correctableText = bestCorrectablePart match {
@@ -94,7 +99,7 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float, val max
    *
    *   correctable profile:
    *        tokens which, after cleaning, contain at least 1 alpha character,
-   *        have a length of at least `CLEAN_TOKEN_LEN_THRESHOLD`, and do not
+   *        have a length of at least `CORRECTABLE_TOKEN_MIN_LEN`, and do not
    *        contain 4 or more repeated characters in a run
    */
   lazy val isCorrectable = {
@@ -104,7 +109,7 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float, val max
     lazy val has4orMoreRepeatedChars = Repeated4orMoreCharsPattern.matcher(correctableText).find()
 
     correctableParts.nonEmpty &&
-      correctableText.length >= CORRECTABLE_TOKEN_LEN_THRESHOLD &&
+      correctableText.length >= CORRECTABLE_TOKEN_MIN_LEN &&
       alphaCharCount > 0 &&
       !has4orMoreRepeatedChars
   }
@@ -148,7 +153,7 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float, val max
 
     def spanToText(spans: List[(Int,Int)]) = spans.sorted.map { case (s, e) => text.substring(s, e) }.mkString
 
-    def join(t1: Seq[TransformedText], t2: Seq[TransformedText], sep: String = ""): Seq[TransformedText] =
+    def join(t1: Iterable[TransformedText], t2: Iterable[TransformedText], sep: String = ""): Iterable[TransformedText] =
       for { left <- t1; right <- t2 }
       yield TransformedText(
         text = left.text + sep + right.text,
@@ -195,14 +200,14 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float, val max
           } else
             tt
       }
-      .filter(t => t.text.length >= CORRECTABLE_TOKEN_LEN_THRESHOLD && isCorrect(t.text))
+      .filter(t => t.text.length >= CORRECTABLE_TOKEN_MIN_LEN && isCorrect(t.text))
   }
 
   /**
    * Stores suggestions coming from dictionary (based on configured Levenshtein distance transforms)
    */
   lazy val dictSuggestions = getSuggestions(correctableText, MAX_DICT_SUGGESTION_LEVENSHTEIN).collect {
-    case suggestion if suggestion.getWord.length >= CORRECTABLE_TOKEN_LEN_THRESHOLD => suggestion.getWord
+    case suggestion if suggestion.getWord.length >= CORRECTABLE_TOKEN_MIN_LEN => suggestion.getWord
   }
 
   /**

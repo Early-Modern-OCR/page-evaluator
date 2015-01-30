@@ -4,6 +4,9 @@ object Token {
   def unapply(token: Token) = Some((token.id, token.text))
 }
 
+/**
+ * Generic token trait
+ */
 trait Token {
   def id: String
   def text: String

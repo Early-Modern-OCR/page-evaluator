@@ -92,7 +92,7 @@ trait TextTransformer {
    * @param maxTransformCount The maximum number of transformations allowed (puts an upper bound on processing time)
    * @return All possible transformations of the given text
    */
-  def transformations(text: String, maxTransformCount: Int = 29) = {
+  def transformations(text: String, maxTransformCount: Int = 29): Iterable[TransformedText] = {
     getPossibleTransformations(text)
       .take(maxTransformCount)
       .sortBy(_.index)

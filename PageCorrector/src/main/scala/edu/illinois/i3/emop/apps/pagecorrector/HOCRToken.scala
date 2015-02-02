@@ -199,17 +199,26 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float, val max
 
     transforms
       .map {
-        // remove punctuation at the beginning and end of a candidate transformation
-        // to allow tokens such as "t()()!" to be corrected to "too" (extra punctuation not used in transformation will
-        // be added back in the last step via the 'preservePunctuationAndStyle' method)
         case tt @ TransformedText(txt, original, trans) =>
-          val beginPunctCount = BeginPunctPattern.findFirstIn(txt).getOrElse("").length
-          val endPunctCount  = EndPunctPattern.findFirstIn(txt).getOrElse("").length
-          if (beginPunctCount + endPunctCount > 0) {
-            val newTxt = txt.drop(beginPunctCount).dropRight(endPunctCount)
+          // remove all punctuation other than hyphen and apostrophe from the transformed text
+          // since it will not be found in the dictionary; this has the chance of fixing
+          // errors such as m.0.th.e.r which should become "mother"
+          val newTxt = txt.replaceAll("""[^\pL\pM\pN-']+""", "")
+          val diff = txt.length - newTxt.length
+          if (diff > 0)
             tt.copy(text = newTxt)
-          } else
+          else
             tt
+          // remove punctuation at the beginning and end of a candidate transformation
+          // to allow tokens such as "t()()!" to be corrected to "too" (extra punctuation not used in transformation will
+          // be added back in the last step via the 'preservePunctuationAndStyle' method)
+//          val beginPunctCount = BeginPunctPattern.findFirstIn(txt).getOrElse("").length
+//          val endPunctCount  = EndPunctPattern.findFirstIn(txt).getOrElse("").length
+//          if (beginPunctCount + endPunctCount > 0) {
+//            val newTxt = txt.drop(beginPunctCount).dropRight(endPunctCount)
+//            tt.copy(text = newTxt)
+//          } else
+//            tt
       }
       .filter(t => t.text.length >= CORRECTABLE_TOKEN_MIN_LEN && isCorrect(t.text))
   }

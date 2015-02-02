@@ -1,7 +1,8 @@
 package edu.illinois.i3.emop.apps.pagecorrector
 
 object TextTransformer {
-  type TransformRules = Map[String, Set[String]]
+//  type TransformRules = Map[String, Set[String]]
+  type TransformRules = List[(String, String)]
 
   case class Transformation(original: String, replacement: String, index: Int) {
     private val extent = index + original.length
@@ -24,12 +25,18 @@ trait TextTransformer {
    * @param text The input text
    * @return The set of transformation rules that are applicable to the given input text
    */
-  protected def getPossibleTransformations(text: String) =
+  protected def getPossibleTransformations(text: String) = {
+//    for {
+//      index <- 0 until text.length
+//      (ocrErr, replacements) <- transformRules if text.startsWith(ocrErr, index)
+//      replacement <- replacements
+//    } yield Transformation(ocrErr, replacement, index)
+
     for {
-      index <- 0 until text.length
-      (ocrErr, replacements) <- transformRules if text.startsWith(ocrErr, index)
-      replacement <- replacements
+      (ocrErr, replacement) <- transformRules
+      index <- 0 until text.length if text.startsWith(ocrErr, index)
     } yield Transformation(ocrErr, replacement, index)
+  }
 
   /**
    * Checks whether a set of transformations can be applied together or not
@@ -85,9 +92,10 @@ trait TextTransformer {
    * @param maxTransformCount The maximum number of transformations allowed (puts an upper bound on processing time)
    * @return All possible transformations of the given text
    */
-  def transformations(text: String, maxTransformCount: Int = 19) = {
+  def transformations(text: String, maxTransformCount: Int = 29) = {
     getPossibleTransformations(text)
       .take(maxTransformCount)
+      .sortBy(_.index)
       .powerSetWithExclusiveFilter(!hasOverlappedTransformations(_))
       .map(adjustTransformationIndexes)
       .map(transform(text, _))
@@ -101,7 +109,8 @@ trait TextTransformer {
    * @return The longest (start,end) pairs of indices into the given text delimiting transformable text
    */
   def findTransformableParts(text: String, nonTransformableCharTolerance: Int = 0) = {
-    val ruleCover = transformRules.keys.withFilter(text.contains).flatMap(err =>
+    //val ruleCover = transformRules.keys.withFilter(text.contains).flatMap(err =>
+    val ruleCover = transformRules.map { case (ocrErr, _) => ocrErr }.withFilter(text.contains).flatMap(err =>
       (0 until text.length).collect { case i if text.substring(i).startsWith(err) => (i, i+err.length) })
     val charCover = text.zipWithIndex.collect { case (c, i) if c.isLetter => (i, i+1) }
     val cover = Set(charCover ++ ruleCover: _*)

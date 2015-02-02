@@ -3,10 +3,9 @@ package edu.illinois.i3.emop.apps.pagecorrector
 import edu.illinois.i3.emop.apps.pagecorrector.TextTransformer.{Transformation, TransformedText}
 
 import scala.collection.mutable
-import edu.illinois.i3.scala.utils.collections._
+import Regexps._
 
 object HOCRToken {
-  import java.util.regex.Pattern
 
   protected val CORRECTABLE_TOKEN_MIN_LEN = 2
   protected val CORRECTABLE_TOKEN_MAX_LEN = 18
@@ -14,11 +13,6 @@ object HOCRToken {
   protected val MAX_NONTRANSFORMABLE_CHARS_ALLOWED = 2
   protected val MAX_DICT_SUGGESTION_LEVENSHTEIN = 200
   protected val BEGIN_PUNCT_ALLOWED = Set('(', '[', '{', '\'', '"')
-
-  protected val AlphaPattern = Pattern.compile("\\p{L}", Pattern.CANON_EQ)
-  protected val Repeated4orMoreCharsPattern = Pattern.compile("(\\P{N})\\1{3,}", Pattern.CANON_EQ)
-  protected val BeginPunctPattern = """^[^\p{L}\p{N}]*""".r
-  protected val EndPunctPattern = """[^\p{L}\p{N}]*$""".r
 
   def preservePunctuationAndStyle(token: HOCRToken, replacementCandidate: String) = {
     val tokenText = token.text
@@ -115,7 +109,13 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float, val max
   }
 
   protected lazy val correctableTextWithoutPunctuation = correctableText.collect { case c if c.isLetter => c }
-  
+
+  /**
+   * Stores whether the token is misspelled.  If a token is not correctable,
+   * then it's neither correctly spelled nor misspelled.
+   */
+  lazy val isMisspelled = if (isCorrectable) !isCorrect(correctableText) else false
+
   /**
    * Use the original token and the token with all punctuation removed as potential replacements to allow the context
    * matching to pick them as "good" if they happen to be correct words that do not exist in our dictionaries (since all
@@ -130,7 +130,7 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float, val max
    * Note: The original (cleaned) token is always first in the set of replacements
    */
   lazy val replacements =
-    if (isMisspelled) {
+    if (isMisspelled && correctableText.length < CORRECTABLE_TOKEN_MAX_LEN) {
       val transformCorrections = correctTransformations.map(_.text)
       var combined = defaultReplacements ++ transformCorrections
       if (transformCorrections.size != 1 && correctableText.length > 3)
@@ -153,6 +153,16 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float, val max
 
     def spanToText(spans: List[(Int,Int)]) = spans.sorted.map { case (s, e) => text.substring(s, e) }.mkString
 
+    /**
+     * WARNING: A very expensive operation - avoid if possible
+     *
+     * Merges two sets of transformations
+     *
+     * @param t1 The first set of transformations
+     * @param t2 The second set of transformations
+     * @param sep The separator to use between them
+     * @return The merged sets
+     */
     def join(t1: Iterable[TransformedText], t2: Iterable[TransformedText], sep: String = ""): Iterable[TransformedText] =
       for { left <- t1; right <- t2 }
       yield TransformedText(
@@ -164,12 +174,13 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float, val max
 
     val transforms = interSpanChars match {
       case spanChars if spanChars.isEmpty || spanChars.forall(_ equals "-") => transformations(correctableText, maxTransformCount)
-      case _ ::> last if last == "'" && bestCorrectablePart.last._2 - bestCorrectablePart.last._1 < 4 =>
-        join(
-          transformations(spanToText(bestCorrectablePart.init), maxTransformCount),
-          transformations(spanToText(List(bestCorrectablePart.last)), maxTransformCount),
-          "'"
-        )
+        // FIXME: This case deals with words with apostrophes by trying to transform each side of the apos, but it's a very expensive operation
+//      case _ ::> last if last == "'" && bestCorrectablePart.last._2 - bestCorrectablePart.last._1 < 4 =>
+//        join(
+//          transformations(spanToText(bestCorrectablePart.init), maxTransformCount),
+//          transformations(spanToText(List(bestCorrectablePart.last)), maxTransformCount),
+//          "'"
+//        )
       case _ => transformations(spanToText(bestCorrectablePart), maxTransformCount)
     }
 
@@ -209,12 +220,6 @@ abstract class HOCRToken(id: String, text: String, val noiseConf: Float, val max
   lazy val dictSuggestions = getSuggestions(correctableText, MAX_DICT_SUGGESTION_LEVENSHTEIN).collect {
     case suggestion if suggestion.getWord.length >= CORRECTABLE_TOKEN_MIN_LEN => suggestion.getWord
   }
-
-  /**
-   * Stores whether the token is misspelled.  If a token is not correctable,
-   * then it's neither correctly spelled nor misspelled.
-   */
-  lazy val isMisspelled = if (isCorrectable) !isCorrect(correctableText) else false
 
   protected val contextMatches = mutable.HashMap.empty[String, mutable.HashSet[TokenContextMatch]]
 

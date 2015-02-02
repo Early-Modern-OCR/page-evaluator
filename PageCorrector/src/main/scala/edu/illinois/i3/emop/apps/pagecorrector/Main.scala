@@ -18,6 +18,8 @@ import scala.collection.mutable
 object Main extends App with LazyLogging {
   implicit val codec = Codec.UTF8
 
+  val startTime = System.currentTimeMillis()
+
   // Parse the command line args and extract values
   val conf = new Conf(args)
   val dbConfFile = conf.dbConfFile()
@@ -240,6 +242,10 @@ object Main extends App with LazyLogging {
       println(compactRender(jsonStats))
     }
   }
+
+  val endTime = System.currentTimeMillis()
+
+  logger.debug(f"Elapsed: ${endTime - startTime}%,d ms")
 }
 
 /**
@@ -274,18 +280,23 @@ class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
     implicit val transformRulesConverter: ValueConverter[TransformRules] =
       singleArgConverter[Try[TransformRules]](f =>
         Try {
-          val rulesJson = managed(Source.fromFile(f)).acquireAndGet(_.mkString)
-          val transformList: List[(String, String)] = for {
-            JField(correct, transforms) <- parseJson(rulesJson)
-            JString(transform) <- transforms
-          } yield transform -> correct
-          val rulesMap = transformList.groupBy(_._1).map { case (k, v) => (k, v.map(_._2).toSet) }
-          rulesMap
+          loadRules(f)
         }
       ).flatMap {
         case Success(rules) => Right(Some(rules))
         case Failure(t) => Left(t.getMessage)
       }
+  }
+
+  protected def loadRules(file: String): TransformRules = {
+    val rulesJson = managed(Source.fromFile(file)).acquireAndGet(_.mkString)
+    val transformList: List[(String, String)] = for {
+      JField(correct, transforms) <- parseJson(rulesJson)
+      JString(transform) <- transforms
+    } yield transform -> correct
+    //          val rulesMap = transformList.groupBy(_._1).map { case (k, v) => (k, v.map(_._2).toSet) }
+    //          rulesMap
+    transformList
   }
 
   import ValueConverters._
